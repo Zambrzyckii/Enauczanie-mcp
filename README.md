@@ -1,10 +1,21 @@
 # enauczanie-mcp
 
-Local MCP server that lets Claude Code browse and download course materials from
-eNauczanie PG (Moodle) with the user's own web service token. Four tools:
-`list_courses`, `get_course_contents`, `download_file`, `get_h5p_content` (text of
-H5P exercises: questions, answers, flashcards). Design and verified facts
-about the platform are in `docs/superpowers/specs/`.
+Local MCP server that lets Claude Code read a student's eNauczanie PG (Moodle) account
+with the user's own web service token. Everything is read-only. Tools:
+
+- Courses: `list_courses`, `get_course_contents` (tree with dates, completion and access
+  restrictions), `get_module_text` (full description, page body or assignment
+  instructions), `download_file`.
+- Homework: `list_deadlines` (all courses), `list_assignments`, `get_assignment_status`
+  (submission, grade, teacher feedback).
+- Grades: `get_grades` (final grades, or the grade items of one course).
+- Forums: `get_forum_discussions` (announcements are forums of type `news`),
+  `get_discussion_posts`.
+- Exercises: `get_quiz_review` (finished attempts with chosen and correct answers),
+  `get_h5p_content` (text of H5P exercises).
+- What is new: `get_recent_changes`, `get_notifications`.
+
+Design and verified facts about the platform are in `docs/superpowers/specs/`.
 
 ## Setup
 

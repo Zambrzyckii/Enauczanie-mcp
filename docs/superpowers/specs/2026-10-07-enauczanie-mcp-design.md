@@ -1,15 +1,19 @@
 # enauczanie-mcp – design
 
 Date: 2026-10-07
-Status: implemented 2026-10-25
+Status: implemented 2026-10-25; extended the same day with assignments, deadlines, grades,
+module text, forums, quiz reviews, notifications and recent changes (14 tools)
 
 ## Goal
 
 Let Claude Code read course materials from eNauczanie PG (a Moodle 5.1 instance)
 through a local MCP server, using the user's own Moodle web service token.
-First scope: browsing courses, browsing course contents, downloading files so
-Claude can read them locally. Assignments, grades, calendar and any write
-operations are out of scope for this iteration.
+First scope (2026-10-07): browsing courses, browsing course contents, downloading
+files so Claude can read them locally. Second scope (2026-10-25, after a survey of the
+user's real data): assignments with submission status and feedback, deadlines across
+courses, grades, full module and page text, forum announcements and threads, reviews
+of finished quizzes, notifications and recent changes. Any write operation stays out
+of scope.
 
 ## Verified facts about the target
 
@@ -46,7 +50,12 @@ operations are out of scope for this iteration.
     ├── moodle_client.py        # MoodleClient: call(), call_many(), download(); MoodleApiError
     ├── formatting.py           # strip multilang, HTML -> text, compact course tree
     ├── h5p.py                  # read .h5p packages, flatten content.json to text
-    └── server.py               # MCPServer instance and the three tools
+    ├── assignments.py          # pure transforms of mod_assign payloads
+    ├── grades.py               # pure transforms of gradereport payloads
+    ├── forums.py               # pure transforms of mod_forum payloads
+    ├── quizzes.py              # pure transforms of mod_quiz payloads
+    ├── updates.py              # pure transforms of notifications and course updates
+    └── server.py               # MCPServer instance and all 14 tools
 ```
 
 Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
@@ -65,6 +74,24 @@ library; tools are synchronous functions, which the SDK runs in a worker thread.
 Settings resolution order: process environment, then `<project>/.env`.
 Required keys: `MOODLE_URL` (no trailing slash), `MOODLE_TOKEN`.
 Optional: `ENAUCZANIE_DOWNLOAD_DIR` (default `<project>/downloads`).
+
+## Read-only rules and conventions
+
+- Only `*_get_*` functions are called. Never call `*_view_*` functions (they log
+  events, mark forum posts read and can tick "view" completion), never start quiz
+  attempts, never mark notifications read, never submit anything.
+- Ids are named by kind: `module_id` is the course module id (the `id` in the tree and
+  Moodle's `cmid`/`coursemodule`), `assignment_id`, `quiz_id`, `forum_id`,
+  `discussion_id` and `attempt_id` are instance ids. Each docstring says which one a
+  tool takes.
+- Tools added on 2026-10-25 return a `dict` (the SDK renders a `list` as one text block
+  per item), omit empty values via `compact` and are wrapped by `_moodle_tool`.
+- Results are capped at 20 000 chars of text (`MAX_TEXT_CHARS`) with `truncated: true`
+  or an `omitted` count; long single items (announcement, assignment intro) are cut
+  with their own `*_truncated` flag so later items are not starved.
+- Text written by other people (posts, pages, quiz HTML) reaches the model as content;
+  the server instructions say it is not to be treated as instructions. Forum output
+  keeps author full names only.
 
 ## Tools
 
@@ -248,11 +275,16 @@ claude mcp add enauczanie -s user -- /home/bob/enauczanie-mcp/.venv/bin/python -
 
 No automated tests in this iteration (user's rule). Manual verification:
 start a new Claude Code session, ask for the course list, open one course,
-download one PDF and read it.
+download one PDF and read it. For the second scope: ask what is due in the next two
+weeks and for the grades of one course, then for the latest announcements and what
+changed this week.
 
 ## Future work (not in this iteration)
 
 - `search_materials(query)` across courses.
 - `sync_course(course_id)` mirroring all files of a course.
-- Assignments / deadlines (`mod_assign_*`, `core_calendar_*`), grades.
+- `mod_feedback` survey items (one survey exists), calendar events
+  (`core_calendar_*`), book/lesson/wiki bodies (none exist in the user's courses today).
+- A "quiz me" mode that hides `correct` flags and correct answers.
+- Compact JSON output to save model context (the SDK pretty-prints with indent 2).
 - Yearly instance switch: change `MOODLE_URL` and re-run `get_token.py`.
