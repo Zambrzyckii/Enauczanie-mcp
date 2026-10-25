@@ -1,0 +1,13 @@
+[project]
+name = "enauczanie-mcp"
+version = "0.1.0"
+description = "Local MCP server exposing eNauczanie PG (Moodle) course materials to Claude Code"
+requires-python = ">=3.10"
+dependencies = ["mcp==2.3.0"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["enauczanie_mcp"]

@@ -31,7 +31,8 @@ operations are out of scope for this iteration.
 
 ```
 ~/enauczanie-mcp/
-├── .venv/                      # python -m venv; mcp==2.3.0
+├── .venv/                      # python -m venv; mcp==2.3.0; package installed editable
+├── pyproject.toml              # makes `python -m enauczanie_mcp` work from any directory
 ├── .env                        # MOODLE_URL, MOODLE_TOKEN (mode 600, never committed)
 ├── .gitignore                  # .env .venv/ downloads/ __pycache__/ .passport token_result.txt
 ├── get_token.py                # helper: obtain/renew the token (not part of the server)
@@ -50,7 +51,9 @@ operations are out of scope for this iteration.
 Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
 `server.py` knows MCP only. `formatting.py` is pure functions between them.
 
-Dependencies: `mcp` (2.3.0) only. HTTP via `urllib.request` from the standard
+Dependencies: `mcp` (2.3.0) only. The package is installed into the venv with
+`pip install -e .`, because Claude Code starts the server from an arbitrary
+working directory and `python -m` finds the package only when it is installed. HTTP via `urllib.request` from the standard
 library; tools are synchronous functions, which the SDK runs in a worker thread.
 
 Settings resolution order: process environment, then `<project>/.env`.

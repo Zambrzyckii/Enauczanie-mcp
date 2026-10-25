@@ -5,3 +5,4 @@ __pycache__/
 .passport
 token_result.txt
 .superpowers/
+*.egg-info/
