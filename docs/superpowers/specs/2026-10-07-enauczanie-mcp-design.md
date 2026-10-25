@@ -22,7 +22,8 @@ of scope.
 - Login is CAS-only (Moja PG). Password-based `login/token.php` does not work.
 - Web services and the `moodle_mobile_app` service are enabled; the token is
   obtained with the mobile launch flow (`admin/tool/mobile/launch.php`) and a
-  registered `moodlemobile://` scheme handler (`get_token.py`).
+  registered `moodlemobile://` scheme handler (`get_token.py --install-handler`
+  writes the `.desktop` entry with the checkout's path and registers it).
 - The token has 441 functions, including `core_enrol_get_users_courses`,
   `core_course_get_contents`, `core_course_get_courses_by_field`,
   `mod_resource_get_resources_by_courses`, `mod_folder_get_folders_by_courses`.
@@ -39,8 +40,8 @@ of scope.
 ├── pyproject.toml              # makes `python -m enauczanie_mcp` work from any directory
 ├── .env                        # MOODLE_URL, MOODLE_TOKEN (mode 600, never committed)
 ├── .gitignore                  # .env .venv/ downloads/ __pycache__/ .passport token_result.txt .superpowers/ *.egg-info/ functions.json
-├── get_token.py                # helper: obtain/renew the token (not part of the server)
-├── moodle-token-handler.desktop# xdg scheme handler used by get_token.py
+├── get_token.py                # helper: obtain/renew the token, install the xdg handler (not part of the server)
+├── LICENSE                     # MIT
 ├── downloads/                  # files fetched by download_file
 ├── docs/superpowers/specs/     # this document
 └── enauczanie_mcp/
@@ -279,7 +280,7 @@ Missing settings fail fast at server start: `__main__.py` loads them before
 ## Registration and verification
 
 ```
-claude mcp add enauczanie -s user -- /home/bob/enauczanie-mcp/.venv/bin/python -m enauczanie_mcp
+claude mcp add enauczanie -s user -- "$(pwd)/.venv/bin/python" -m enauczanie_mcp
 ```
 
 No automated tests in this iteration (user's rule). Manual verification:

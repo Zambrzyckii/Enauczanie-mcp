@@ -36,12 +36,12 @@
 - Create: `.gitignore`, `enauczanie_mcp/__init__.py`, `.venv/` (generated)
 
 **Interfaces:**
-- Produces: importable package `enauczanie_mcp`; interpreter `/home/bob/enauczanie-mcp/.venv/bin/python` with `mcp` installed.
+- Produces: importable package `enauczanie_mcp`; interpreter `<project dir>/.venv/bin/python` with `mcp` installed.
 
 - [ ] **Step 1: Create the virtual environment and install the SDK**
 
 ```bash
-cd /home/bob/enauczanie-mcp && python3 -m venv .venv && .venv/bin/pip install "mcp==2.3.0"
+cd <project dir> && python3 -m venv .venv && .venv/bin/pip install "mcp==2.3.0"
 ```
 
 - [ ] **Step 2: Verify the import and the API names the plan relies on**
@@ -135,7 +135,7 @@ Design note: process environment overrides `.env` so `claude mcp add -e MOODLE_U
 ```bash
 .venv/bin/python -c "from enauczanie_mcp.config import load_settings as l; s=l(); print(s.moodle_url, s.download_dir, len(s.moodle_token)>10)"
 ```
-Expected: `https://enauczanie.pg.edu.pl/2025 /home/bob/enauczanie-mcp/downloads True`
+Expected: `https://enauczanie.pg.edu.pl/2025 <project dir>/downloads True`
 
 - [ ] **Step 3: Owner commits**
 
@@ -337,7 +337,7 @@ from enauczanie_mcp.config import load_settings
 from enauczanie_mcp.moodle_client import MoodleClient
 from enauczanie_mcp.formatting import *
 print(strip_multilang('{mlang pl}Systemy{mlang}{mlang en}Systems{mlang}'), '|', strip_multilang('{mlang en}Only EN{mlang}'))
-print(safe_filename('../../.bashrc'), slugify('M. Adamczyk 2'), format_timestamp(1801868400))
+print(safe_filename('../../.bashrc'), slugify('Course 2'), format_timestamp(1801868400))
 s = load_settings(); c = MoodleClient(s.moodle_url, s.moodle_token)
 tree = build_course_tree(c.call('core_course_get_contents', courseid=175))
 print(json.dumps(tree[:2], ensure_ascii=False, indent=1)[:1200])
@@ -468,7 +468,7 @@ files = [f for s in tree for m in s['modules'] for f in m.get('files', [])]
 print(download_file(files[0]['fileurl'], cs[0]['id']) if files else 'no files in first course')
 "
 ```
-Expected: course count and first course dict, a section count, then `{'path': '/home/bob/enauczanie-mcp/downloads/<slug>/<file>', 'size': N, 'skipped': False}`.
+Expected: course count and first course dict, a section count, then `{'path': '<project dir>/downloads/<slug>/<file>', 'size': N, 'skipped': False}`.
 
 - [ ] **Step 4: Protocol smoke test over stdio**
 
@@ -494,7 +494,7 @@ git add enauczanie_mcp/server.py enauczanie_mcp/__main__.py && git commit -m "fe
 - [ ] **Step 1: Owner registers the server**
 
 ```bash
-claude mcp add enauczanie -s user -- /home/bob/enauczanie-mcp/.venv/bin/python -m enauczanie_mcp
+claude mcp add enauczanie -s user -- <project dir>/.venv/bin/python -m enauczanie_mcp
 claude mcp list
 ```
 Expected: `enauczanie` listed as connected.

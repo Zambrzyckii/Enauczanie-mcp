@@ -1,9 +1,14 @@
 [project]
 name = "enauczanie-mcp"
 version = "0.1.0"
-description = "Local MCP server exposing eNauczanie PG (Moodle) course materials to Claude Code"
+description = "Read-only MCP server exposing a student's eNauczanie PG (Moodle) account to Claude Code"
+readme = "README.md"
+license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = ["mcp==2.3.0"]
+
+[project.urls]
+Repository = "https://github.com/Zambrzyckii/enauczanie-mcp"
 
 [build-system]
 requires = ["setuptools>=61"]
