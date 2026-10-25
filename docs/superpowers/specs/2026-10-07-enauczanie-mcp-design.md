@@ -43,7 +43,7 @@ operations are out of scope for this iteration.
     ├── __init__.py
     ├── __main__.py             # MCPServer.run("stdio")
     ├── config.py               # Settings loaded from env vars or the project .env
-    ├── moodle_client.py        # MoodleClient: call(), download(); MoodleApiError
+    ├── moodle_client.py        # MoodleClient: call(), call_many(), download(); MoodleApiError
     ├── formatting.py           # strip multilang, HTML -> text, compact course tree
     ├── h5p.py                  # read .h5p packages, flatten content.json to text
     └── server.py               # MCPServer instance and the three tools
@@ -202,6 +202,28 @@ Questions beyond 20 000 chars of text are dropped and counted in `omitted`. When
 review call fails with `noreview` (verified: the attempts call still works) the result
 carries the attempts with `review_available: false` instead of an error. No finished
 attempt or an unknown attempt id is an error. Attempts are never started.
+
+### get_notifications(limit: int = 20)
+Added 2026-10-25. Calls `message_popup_get_popup_notifications` for the user's own id,
+newest first, `limit` clamped to 1..50 (verified: reading does not change
+`unreadcount`). Returns `{unread, notifications: [{id, subject, text, created, read,
+url, source}]}` where `text` is Moodle's plain `fullmessage` cut at 500 chars and
+`source` the component (`mod_forum`, `mod_assign`, ...). Notifications are never marked
+read.
+
+### get_recent_changes(days: int = 7)
+Added 2026-10-25. For every visible course that has not ended before the window
+(`core_enrol_get_users_courses`), calls `core_course_get_updates_since` and, for courses
+with updates, `core_course_get_contents` with `excludecontents` to name the modules.
+Returns `{changes: [{course_id, course, module_id, type, name, changed, at}], warnings}`
+newest first, where `changed` lists Moodle's update areas (verified values:
+`discussions`, `submissions`, `contentfiles`, `configuration`) and `at` the latest
+`timeupdated`. New forum discussions do show up (verified on the announcements forum of
+course 4479). A course whose call fails is skipped with a warning (verified: course
+1370 answers `dmlreadexception`). `days` is clamped to 1..60. The per-course calls run
+four at a time through `MoodleClient.call_many` (a 30-day run took 10 s sequentially).
+The 100 newest changes are returned and the rest counted in `omitted` (178 changes in
+30 days at the time of writing, most of them teacher edits of H5P packages).
 
 ## Error handling
 

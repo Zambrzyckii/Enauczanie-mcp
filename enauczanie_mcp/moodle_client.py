@@ -3,6 +3,7 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,19 @@ class MoodleClient:
         if isinstance(payload, dict) and "exception" in payload:
             raise MoodleApiError(payload.get("errorcode", "unknown"), payload.get("message", ""))
         return payload
+
+    def call_many(self, calls: list[tuple[str, dict[str, Any]]], workers: int = 4) -> list[Any]:
+        """Run several REST calls concurrently; a failed call yields its MoodleApiError in place of the result."""
+
+        def run(call: tuple[str, dict[str, Any]]) -> Any:
+            function, params = call
+            try:
+                return self.call(function, **params)
+            except MoodleApiError as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(run, calls))
 
     def file_segments(self, fileurl: str) -> list[str]:
         """Validate a pluginfile URL of this instance and return its path segments after pluginfile.php."""

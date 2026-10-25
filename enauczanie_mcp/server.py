@@ -24,10 +24,12 @@ from .grades import summarize_course_grade, summarize_grade_item
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
 from .quizzes import quiz_deadline, summarize_attempt, summarize_question
+from .updates import summarize_change, summarize_notification
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 MAX_H5P_CHARS = 20_000
 MAX_TEXT_CHARS = 20_000
+MAX_CHANGES = 100
 _HINTS = {
     "invalidtoken": " Run get_token.py to obtain a new token.",
     "nopermissions": " The account has no access to this item.",
@@ -330,6 +332,56 @@ def get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = Non
             "questions": kept,
             "omitted": len(questions) - len(kept) or None,
             "truncated": truncated or None,
+        }
+    )
+
+
+@server.tool()
+@_moodle_tool
+def get_notifications(limit: int = 20) -> dict:
+    """Return the user's latest Moodle notifications (new forum posts, submission confirmations, grades) with the
+    unread count, newest first."""
+    payload = _client().call(
+        "message_popup_get_popup_notifications", useridto=_userid(), newestfirst=1, limit=_clamp(limit, 1, 50)
+    )
+    return {
+        "unread": payload.get("unreadcount", 0),
+        "notifications": [summarize_notification(n) for n in payload["notifications"]],
+    }
+
+
+@server.tool()
+@_moodle_tool
+def get_recent_changes(days: int = 7) -> dict:
+    """List what changed in the user's current courses in the last days (new announcements and posts, new or
+    changed files, assignment submissions and grades), per module, newest first."""
+    since = int(time.time()) - _clamp(days, 1, 60) * 86400
+    courses = [
+        c
+        for c in _client().call("core_enrol_get_users_courses", userid=_userid())
+        if not c.get("hidden") and (not c.get("enddate") or c["enddate"] > since)
+    ]
+    changes, warnings, with_updates = [], [], []
+    updates = _client().call_many([("core_course_get_updates_since", {"courseid": c["id"], "since": since}) for c in courses])
+    for course, update in zip(courses, updates):
+        if isinstance(update, MoodleApiError):
+            warnings.append(f"{course['shortname']}: Moodle error {update.errorcode}")
+        elif update["instances"]:
+            with_updates.append((course, update["instances"]))
+    options = {"options[0][name]": "excludecontents", "options[0][value]": 1}
+    contents = _client().call_many([("core_course_get_contents", {"courseid": c["id"], **options}) for c, _ in with_updates])
+    for (course, instances), sections in zip(with_updates, contents):
+        if isinstance(sections, MoodleApiError):
+            warnings.append(f"{course['shortname']}: Moodle error {sections.errorcode}")
+            continue
+        modules = {m["id"]: m for section in sections for m in section.get("modules", [])}
+        changes += [summarize_change(course, i, modules.get(i["id"], {})) for i in instances]
+    newest_first = [change for _, change in sorted(changes, key=lambda x: x[0], reverse=True)]
+    return compact(
+        {
+            "changes": newest_first[:MAX_CHANGES],
+            "omitted": max(0, len(newest_first) - MAX_CHANGES) or None,
+            "warnings": warnings,
         }
     )
 
