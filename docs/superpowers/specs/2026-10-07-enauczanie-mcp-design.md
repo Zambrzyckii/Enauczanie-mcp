@@ -51,6 +51,10 @@ operations are out of scope for this iteration.
 
 Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
 `server.py` knows MCP only. `formatting.py` is pure functions between them.
+`html_to_text` drops `<script>` and `<style>`, joins inline tags without extra
+spaces and takes keyword flags: `links` appends absolute link targets, `controls`
+marks checked radios and checkboxes as `[x]` (how a quiz review shows the chosen
+answer), `keep_breaks` keeps paragraph and list breaks instead of one line.
 
 Dependencies: `mcp` (2.3.0) only. The package is installed into the venv with
 `pip install -e .`, because Claude Code starts the server from an arbitrary

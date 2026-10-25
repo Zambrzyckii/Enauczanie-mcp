@@ -1,11 +1,18 @@
 import re
 from datetime import datetime, timezone
-from html import unescape
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
 
 _MLANG = re.compile(r"\{mlang\s+([\w-]+)\}(.*?)\{mlang\}", re.S)
 _WS = re.compile(r"\s+")
+_SPACES = re.compile(r"[ \t\r\f\v]+")
+_BLANK_LINES = re.compile(r"\n\s*\n")
+
+_SKIPPED_TAGS = frozenset({"script", "style"})
+_BLOCK_TAGS = frozenset({"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre"})
+_LINE_TAGS = frozenset({"br", "li", "tr"})
+_CELL_TAGS = frozenset({"td", "th"})
+_HIDDEN_INPUTS = frozenset({"hidden", "submit", "button", "reset", "image"})
 
 
 def strip_multilang(text: str, lang: str = "pl") -> str:
@@ -17,18 +24,67 @@ def strip_multilang(text: str, lang: str = "pl") -> str:
 
 
 class _TextExtractor(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, links: bool, controls: bool) -> None:
         super().__init__()
         self.parts: list[str] = []
+        self._links = links
+        self._controls = controls
+        self._skip_depth = 0
+        self._href: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        if tag in _SKIPPED_TAGS:
+            self._skip_depth += 1
+        elif tag in _BLOCK_TAGS or tag in _LINE_TAGS:
+            self.parts.append("\n")
+        elif tag == "a" and self._links:
+            self._href = attributes.get("href")
+        elif tag == "input" and self._controls:
+            self._handle_input(attributes)
+        elif tag == "option" and self._controls and "selected" in attributes:
+            self.parts.append("[x] ")
+
+    def _handle_input(self, attributes: dict[str, str | None]) -> None:
+        kind = attributes.get("type") or "text"
+        if kind in ("radio", "checkbox"):
+            self.parts.append("[x] " if "checked" in attributes else "[ ] ")
+        elif kind not in _HIDDEN_INPUTS:
+            self.parts.append(f"[{attributes.get('value') or ''}] ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in _SKIPPED_TAGS:
+            self._skip_depth = max(0, self._skip_depth - 1)
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+        elif tag in _CELL_TAGS:
+            self.parts.append(" ")
+        elif tag == "a" and self._href:
+            if self._href.startswith("http"):
+                self.parts.append(f" ({self._href})")
+            self._href = None
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(data)
+        if not self._skip_depth:
+            self.parts.append(data)
 
 
-def html_to_text(html: str, limit: int | None = 200) -> str:
-    extractor = _TextExtractor()
+def html_to_text(
+    html: str,
+    limit: int | None = 200,
+    *,
+    links: bool = False,
+    controls: bool = False,
+    keep_breaks: bool = False,
+) -> str:
+    extractor = _TextExtractor(links, controls)
     extractor.feed(html or "")
-    text = _WS.sub(" ", unescape(" ".join(extractor.parts))).strip()
+    text = "".join(extractor.parts)
+    if keep_breaks:
+        text = _BLANK_LINES.sub("\n\n", _SPACES.sub(" ", text))
+        text = "\n".join(line.strip() for line in text.split("\n")).strip()
+    else:
+        text = _WS.sub(" ", text).strip()
     if limit is None or len(text) <= limit:
         return text
     return text[: limit - 1].rstrip() + "…"
