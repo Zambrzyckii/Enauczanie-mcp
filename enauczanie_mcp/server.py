@@ -8,7 +8,17 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from .assignments import assignment_deadline, summarize_assignment, summarize_status
 from .config import Settings, load_settings
-from .formatting import build_course_tree, format_timestamp, safe_filename, slugify, strip_multilang
+from .formatting import (
+    build_course_tree,
+    compact,
+    cut,
+    format_timestamp,
+    html_to_text,
+    safe_filename,
+    slugify,
+    strip_multilang,
+    summarize_files,
+)
 from .grades import summarize_course_grade, summarize_grade_item
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
@@ -70,6 +80,14 @@ def _moodle_tool(func):
 
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
+
+
+def _find(items: list[dict], key: str, value) -> dict:
+    return next((item for item in items if item.get(key) == value), {})
+
+
+def _full_text(html: str) -> str:
+    return html_to_text(html, None, links=True, keep_breaks=True)
 
 
 @server.tool()
@@ -187,6 +205,44 @@ def get_grades(course_id: int | None = None) -> dict:
         return {"courses": [summarize_course_grade(g, names) for g in overview]}
     report = _client().call("gradereport_user_get_grade_items", courseid=course_id, userid=_userid())
     return {"items": [summarize_grade_item(i) for g in report["usergrades"] for i in g["gradeitems"]]}
+
+
+@server.tool()
+@_moodle_tool
+def get_module_text(course_id: int, module_id: int) -> dict:
+    """Return the full text of one module (module_id from get_course_contents): the whole description, the body of
+    a page or the instructions of an assignment, with link targets and the module's files."""
+    sections = _client().call(
+        "core_course_get_contents", courseid=course_id, **{"options[0][name]": "cmid", "options[0][value]": module_id}
+    )
+    module = _find([m for s in sections for m in s.get("modules", [])], "id", module_id)
+    if not module:
+        raise ToolError(f"No module {module_id} in course {course_id}")
+    contents = module.get("contents") or []
+    text = _full_text(module.get("description", ""))
+    files = [c for c in contents if c.get("type") == "file"]
+    if module["modname"] == "page":
+        pages = _client().call("mod_page_get_pages_by_courses", **{"courseids[0]": course_id})["pages"]
+        page = _find(pages, "coursemodule", module_id)
+        text = "\n\n".join(part for part in (text, _full_text(page.get("content", ""))) if part)
+        files = page.get("contentfiles", [])
+    elif module["modname"] == "assign" and not text:
+        payload = _client().call("mod_assign_get_assignments", **{"courseids[0]": course_id})
+        assignment = _find([a for c in payload["courses"] for a in c["assignments"]], "cmid", module_id)
+        text = _full_text(assignment.get("intro", ""))
+        files += assignment.get("introattachments", []) + assignment.get("introfiles", [])
+    text, truncated = cut(text, MAX_TEXT_CHARS)
+    return compact(
+        {
+            "module_id": module_id,
+            "type": module["modname"],
+            "name": strip_multilang(module.get("name", "")),
+            "text": text,
+            "url": next((c["fileurl"] for c in contents if c.get("type") == "url"), None),
+            "files": summarize_files(files),
+            "truncated": truncated or None,
+        }
+    )
 
 
 def _download(fileurl: str, course_id: int) -> dict:

@@ -51,8 +51,8 @@ operations are out of scope for this iteration.
 
 Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
 `server.py` knows MCP only. `formatting.py` is pure functions between them.
-`html_to_text` drops `<script>` and `<style>`, joins inline tags without extra
-spaces and takes keyword flags: `links` appends absolute link targets, `controls`
+`html_to_text` removes `{mlang}` blocks of other languages (Polish wins), drops
+`<script>` and `<style>`, joins inline tags without extra spaces and takes keyword flags: `links` appends absolute link targets, `controls`
 marks checked radios and checkboxes as `[x]` (how a quiz review shows the chosen
 answer), `keep_breaks` keeps paragraph and list breaks instead of one line.
 
@@ -153,6 +153,20 @@ default `userid=0` means "all users" there and fails with `nopermissions`), retu
 range, percentage, weight, feedback, graded, hidden}]}` with empty values omitted. Course
 and category totals have no `itemname` in Moodle and are named `Course total` and
 `Category total`.
+
+### get_module_text(course_id: int, module_id: int)
+Added 2026-10-25. Calls `core_course_get_contents` with the `cmid` option (verified: the
+sections come back with only that module) and returns `{module_id, type, name, text,
+url, files, truncated}` with empty values omitted. `text` is the full description with
+link targets and paragraph breaks. For `page` modules the body from
+`mod_page_get_pages_by_courses` is appended and `contentfiles` replace the synthetic
+`index.html`. For `assign` modules without a description (the tree carries one for only
+15 of 122 assignments, when "show description" is ticked) the intro and its attachments
+come from `mod_assign_get_assignments`. Text is cut at 20 000 chars with
+`truncated: true`. An unknown module gives "No module ... in course ...". Module types
+seen across all courses: resource, assign, label, subsection, url, page, forum,
+choicegroup, attendance, quiz, folder, h5pactivity, lti, consentform, offlinequiz,
+feedback. No book, lesson or wiki.
 
 ## Error handling
 

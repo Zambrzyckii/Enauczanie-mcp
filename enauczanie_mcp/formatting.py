@@ -21,7 +21,7 @@ def strip_multilang(text: str, lang: str = "pl") -> str:
     if not blocks:
         return text.strip()
     keep = lang if any(code == lang for code, _ in blocks) else blocks[0][0]
-    return _WS.sub(" ", _MLANG.sub(lambda m: m.group(2) if m.group(1) == keep else "", text)).strip()
+    return _SPACES.sub(" ", _MLANG.sub(lambda m: m.group(2) if m.group(1) == keep else "", text)).strip()
 
 
 class _TextExtractor(HTMLParser):
@@ -79,7 +79,7 @@ def html_to_text(
     keep_breaks: bool = False,
 ) -> str:
     extractor = _TextExtractor(links, controls)
-    extractor.feed(html or "")
+    extractor.feed(strip_multilang(html or ""))
     text = "".join(extractor.parts)
     if keep_breaks:
         text = _BLANK_LINES.sub("\n\n", _SPACES.sub(" ", text))
