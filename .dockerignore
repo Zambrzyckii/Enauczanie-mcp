@@ -1,0 +1,7 @@
+.env
+.passport
+token_result.txt
+functions.json
+.venv/
+downloads/
+.git/
