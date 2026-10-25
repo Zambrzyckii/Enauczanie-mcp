@@ -5,3 +5,5 @@ functions.json
 .venv/
 downloads/
 .git/
+**/__pycache__/
+*.egg-info/
