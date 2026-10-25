@@ -41,6 +41,9 @@ cd enauczanie-mcp
 python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
+On Windows the venv keeps its programs in `.venv\Scripts` instead of `.venv/bin`, so use
+`.venv\Scripts\pip` here and `.venv\Scripts\python.exe` when registering the server.
+
 ## Token
 
 One-time: register the handler for `moodlemobile://` links (it writes a `.desktop` entry
