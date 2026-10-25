@@ -31,10 +31,13 @@ STRUCTURAL_SEGMENTS = frozenset({"params", "content"})
 
 
 def read_package(path: Path) -> tuple[dict, dict]:
-    """Return (h5p.json, content/content.json) of an .h5p package."""
-    with zipfile.ZipFile(path) as package:
-        meta = json.loads(package.read("h5p.json"))
-        content = json.loads(package.read("content/content.json"))
+    """Return (h5p.json, content/content.json) of an .h5p package; a file that is not a zip raises ValueError."""
+    try:
+        with zipfile.ZipFile(path) as package:
+            meta = json.loads(package.read("h5p.json"))
+            content = json.loads(package.read("content/content.json"))
+    except zipfile.BadZipFile as exc:
+        raise ValueError(f"{path.name} is not a valid .h5p package") from exc
     return meta, content
 
 
