@@ -1,12 +1,20 @@
-from .formatting import compact, format_datetime, html_to_text, strip_multilang
+from .formatting import compact, cut, format_datetime, html_to_text, strip_multilang
+
+FORMAT_HTML = 1
+TEXT_LIMIT = 500
 
 
 def summarize_notification(notification: dict) -> dict:
+    message = notification.get("fullmessage") or notification.get("smallmessage", "")
+    if notification.get("fullmessageformat") == FORMAT_HTML:
+        text = html_to_text(message, TEXT_LIMIT, links=True)
+    else:
+        text = cut(" ".join(message.split()), TEXT_LIMIT)[0]
     return compact(
         {
             "id": notification["id"],
             "subject": notification.get("subject", ""),
-            "text": html_to_text(notification.get("fullmessage") or notification.get("smallmessage", ""), 500, links=True),
+            "text": text,
             "created": format_datetime(notification.get("timecreated")),
             "read": bool(notification.get("read")),
             "url": notification.get("contexturl"),

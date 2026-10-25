@@ -1,10 +1,7 @@
-from .formatting import compact, cut, format_datetime, html_to_text, strip_multilang, summarize_files
+from .formatting import compact, cut, format_datetime, full_text, strip_multilang, summarize_files
 
 MESSAGE_LIMIT = 1_500
-
-
-def _message(html: str) -> str:
-    return html_to_text(html, None, links=True, keep_breaks=True)
+POST_LIMIT = 10_000
 
 
 def summarize_forum(forum: dict) -> dict:
@@ -17,7 +14,7 @@ def summarize_forum(forum: dict) -> dict:
 
 
 def summarize_discussion(discussion: dict) -> dict:
-    message, truncated = cut(_message(discussion.get("message", "")), MESSAGE_LIMIT)
+    message, truncated = cut(full_text(discussion.get("message", "")), MESSAGE_LIMIT)
     return compact(
         {
             "discussion_id": discussion["discussion"],
@@ -34,6 +31,7 @@ def summarize_discussion(discussion: dict) -> dict:
 
 
 def summarize_post(post: dict) -> dict:
+    message, truncated = cut(full_text(post.get("message", "")), POST_LIMIT)
     return compact(
         {
             "post_id": post["id"],
@@ -41,7 +39,8 @@ def summarize_post(post: dict) -> dict:
             "subject": post.get("subject", ""),
             "author": (post.get("author") or {}).get("fullname"),
             "created": format_datetime(post.get("timecreated")),
-            "message": _message(post.get("message", "")),
+            "message": message,
+            "message_truncated": truncated or None,
             "files": summarize_files(post.get("attachments") or []),
         }
     )

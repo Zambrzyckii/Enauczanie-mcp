@@ -1,10 +1,10 @@
-from .formatting import compact, cut, format_datetime, html_to_text, strip_multilang, summarize_files
+from .formatting import compact, cut, format_datetime, full_text, html_to_text, strip_multilang, summarize_files
 
 INTRO_LIMIT = 2_000
 
 
 def summarize_assignment(assignment: dict) -> dict:
-    intro, truncated = cut(html_to_text(assignment.get("intro", ""), None, links=True, keep_breaks=True), INTRO_LIMIT)
+    intro, truncated = cut(full_text(assignment.get("intro", "")), INTRO_LIMIT)
     files = (
         assignment.get("introattachments", [])
         + assignment.get("introfiles", [])
@@ -23,7 +23,7 @@ def summarize_assignment(assignment: dict) -> dict:
             "name": strip_multilang(assignment["name"]),
             "intro": intro,
             "intro_truncated": truncated or None,
-            "instructions": html_to_text(assignment.get("activity", ""), None, links=True, keep_breaks=True),
+            "instructions": full_text(assignment.get("activity", "")),
             "files": summarize_files(files),
             "opens": format_datetime(assignment.get("allowsubmissionsfromdate")),
             "due": format_datetime(assignment.get("duedate")),
@@ -60,7 +60,7 @@ def summarize_status(payload: dict) -> dict:
 
 def plugin_text(plugins: list[dict], plugin_type: str) -> str:
     fields = [f.get("text", "") for p in plugins if p.get("type") == plugin_type for f in p.get("editorfields", [])]
-    return html_to_text("\n".join(fields), None, links=True, keep_breaks=True)
+    return full_text("\n".join(fields))
 
 
 def plugin_files(plugins: list[dict]) -> list[dict]:

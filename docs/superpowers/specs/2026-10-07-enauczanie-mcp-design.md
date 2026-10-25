@@ -38,7 +38,7 @@ of scope.
 ├── .venv/                      # python -m venv; mcp==2.3.0; package installed editable
 ├── pyproject.toml              # makes `python -m enauczanie_mcp` work from any directory
 ├── .env                        # MOODLE_URL, MOODLE_TOKEN (mode 600, never committed)
-├── .gitignore                  # .env .venv/ downloads/ __pycache__/ .passport token_result.txt
+├── .gitignore                  # .env .venv/ downloads/ __pycache__/ .passport token_result.txt .superpowers/ *.egg-info/ functions.json
 ├── get_token.py                # helper: obtain/renew the token (not part of the server)
 ├── moodle-token-handler.desktop# xdg scheme handler used by get_token.py
 ├── downloads/                  # files fetched by download_file
@@ -64,7 +64,9 @@ Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
 `<script>` and `<style>`, joins inline tags without extra spaces and takes keyword flags: `links` appends absolute link targets, `controls`
 marks checked radios and checkboxes as `[x]` (how a quiz review shows the chosen
 answer), `keep_breaks` keeps one line per block or list item instead of a single line,
-`skip_classes` drops subtrees by CSS class (used for quiz review chrome).
+`skip_classes` drops subtrees by CSS class (used for quiz review chrome; a void tag such
+as `<input>` with such a class is dropped alone). A link whose text is its own URL is not
+repeated.
 
 Dependencies: `mcp` (2.3.0) only. The package is installed into the venv with
 `pip install -e .`, because Claude Code starts the server from an arbitrary
@@ -85,7 +87,7 @@ Optional: `ENAUCZANIE_DOWNLOAD_DIR` (default `<project>/downloads`).
   `discussion_id` and `attempt_id` are instance ids. Each docstring says which one a
   tool takes.
 - Tools added on 2026-10-25 return a `dict` (the SDK renders a `list` as one text block
-  per item), omit empty values via `compact` and are wrapped by `_moodle_tool`.
+  per item) and omit empty values via `compact`. Every tool is wrapped by `_moodle_tool`.
 - Results are capped at 20 000 chars of text (`MAX_TEXT_CHARS`) with `truncated: true`
   or an `omitted` count; long single items (announcement, assignment intro) are cut
   with their own `*_truncated` flag so later items are not starved.
@@ -99,7 +101,8 @@ Optional: `ENAUCZANIE_DOWNLOAD_DIR` (default `<project>/downloads`).
 Calls `core_webservice_get_site_info` (for `userid`) and
 `core_enrol_get_users_courses`. Returns a list of
 `{id, shortname, fullname, end_date}` where `fullname` has multilang markers
-removed and `end_date` is ISO 8601 or null when Moodle returns 0.
+removed and `end_date` is a local-time ISO date (since 2026-10-25; it was a UTC date
+before) or null when Moodle returns 0.
 Courses with `hidden == true` are omitted unless `include_hidden` is set.
 
 ### get_course_contents(course_id: int)
@@ -189,8 +192,8 @@ url, files, truncated}` with empty values omitted. `text` is the full descriptio
 link targets and paragraph breaks. For `page` modules the body from
 `mod_page_get_pages_by_courses` is appended and `contentfiles` replace the synthetic
 `index.html`. For `assign` modules without a description (the tree carries one for only
-15 of 122 assignments, when "show description" is ticked) the intro and its attachments
-come from `mod_assign_get_assignments`. Text is cut at 20 000 chars with
+15 of 122 assignments, when "show description" is ticked) the intro, the activity
+instructions and the attachments come from `mod_assign_get_assignments`. Text is cut at 20 000 chars with
 `truncated: true`. An unknown module gives "No module ... in course ...". Module types
 seen across all courses: resource, assign, label, subsection, url, page, forum,
 choicegroup, attendance, quiz, folder, h5pactivity, lti, consentform, offlinequiz,
@@ -211,9 +214,10 @@ Author full names are kept, profile pictures and URLs are not.
 
 ### get_discussion_posts(discussion_id: int)
 Added 2026-10-25. Calls `mod_forum_get_discussion_posts` sorted by `created` ascending
-and returns `{posts: [{post_id, parent_id, subject, author, created, message, files}],
-truncated}` with full message text, capped at 20 000 chars in total. Never calls any
-`mod_forum_view_*` function, which would mark posts read.
+and returns `{posts: [{post_id, parent_id, subject, author, created, message,
+message_truncated, files}], truncated}`. Each post is cut at 10 000 chars, the whole
+result at 20 000 chars of message text; the first post is always returned. Never calls
+any `mod_forum_view_*` function, which would mark posts read.
 
 ### get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = None)
 Added 2026-10-25. Calls `mod_quiz_get_quizzes_by_courses` (quiz by `coursemodule`),
@@ -234,9 +238,9 @@ attempt or an unknown attempt id is an error. Attempts are never started.
 Added 2026-10-25. Calls `message_popup_get_popup_notifications` for the user's own id,
 newest first, `limit` clamped to 1..50 (verified: reading does not change
 `unreadcount`). Returns `{unread, notifications: [{id, subject, text, created, read,
-url, source}]}` where `text` is Moodle's plain `fullmessage` cut at 500 chars and
-`source` the component (`mod_forum`, `mod_assign`, ...). Notifications are never marked
-read.
+url, source}]}` where `text` is `fullmessage` cut at 500 chars (converted from HTML when
+`fullmessageformat` says HTML, otherwise only whitespace is collapsed) and `source` the
+component (`mod_forum`, `mod_assign`, ...). Notifications are never marked read.
 
 ### get_recent_changes(days: int = 7)
 Added 2026-10-25. For every visible course that has not ended before the window
@@ -250,7 +254,9 @@ course 4479). A course whose call fails is skipped with a warning (verified: cou
 1370 answers `dmlreadexception`). `days` is clamped to 1..60. The per-course calls run
 four at a time through `MoodleClient.call_many` (a 30-day run took 10 s sequentially).
 The 100 newest changes are returned and the rest counted in `omitted` (178 changes in
-30 days at the time of writing, most of them teacher edits of H5P packages).
+30 days at the time of writing, most of them teacher edits of H5P packages). `changes`
+is always present, so an empty list means nothing changed; when every course fails with
+the same error the tool raises it instead.
 
 ## Error handling
 
@@ -258,8 +264,8 @@ Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ..
 on errors. `MoodleClient.call` raises `MoodleApiError(errorcode, message)`.
 Tools catch it and return a one-line message. Hints are appended for `invalidtoken`
 ("run get_token.py to obtain a new token"), `nopermissions`, `accessexception` and
-`noreview`. Tools added on 2026-10-25 are wrapped by `_moodle_tool`, which also maps
-`KeyError`, `TypeError` and `ValueError` from an unexpected response shape to a
+`noreview`. Every tool is wrapped by `_moodle_tool`, which also maps `KeyError`,
+`IndexError`, `TypeError` and `ValueError` from an unexpected response shape to a
 `ToolError`, because the SDK shows the model only `ToolError` text and hides every other
 exception behind "Error executing tool". Network, HTTP-protocol, URL and JSON-decoding errors
 (`OSError`, `http.client.HTTPException`, `ValueError`; 30 s per request) are

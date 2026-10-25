@@ -13,7 +13,7 @@ from .formatting import (
     compact,
     cut,
     format_timestamp,
-    html_to_text,
+    full_text,
     safe_filename,
     slugify,
     strip_multilang,
@@ -82,7 +82,7 @@ def _moodle_tool(func):
             return func(*args, **kwargs)
         except MoodleApiError as exc:
             raise _tool_error(exc) from None
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ToolError(f"Unexpected Moodle response in {func.__name__}: {exc!r}") from None
 
     return wrapper
@@ -96,28 +96,23 @@ def _find(items: list[dict], key: str, value) -> dict:
     return next((item for item in items if item.get(key) == value), {})
 
 
-def _full_text(html: str) -> str:
-    return html_to_text(html, None, links=True, keep_breaks=True)
-
-
 def _within_budget(items: list[dict], key: str, budget: int) -> tuple[list[dict], int, bool]:
-    """Keep leading items while the total length of their key fits the budget; the flag says whether any were dropped."""
+    """Keep leading items while the total length of their key fits the budget, always at least the first one; the
+    flag says whether any were dropped."""
     kept = []
     for item in items:
         budget -= len(item.get(key, ""))
-        if budget < 0:
+        if budget < 0 and kept:
             return kept, 0, True
         kept.append(item)
-    return kept, budget, False
+    return kept, max(budget, 0), False
 
 
 @server.tool()
+@_moodle_tool
 def list_courses(include_hidden: bool = False) -> list[dict]:
     """List the user's enrolled courses on eNauczanie. Returns id, shortname, fullname and end_date."""
-    try:
-        courses = _client().call("core_enrol_get_users_courses", userid=_userid())
-    except MoodleApiError as exc:
-        raise _tool_error(exc) from None
+    courses = _client().call("core_enrol_get_users_courses", userid=_userid())
     return [
         {
             "id": c["id"],
@@ -131,28 +126,25 @@ def list_courses(include_hidden: bool = False) -> list[dict]:
 
 
 @server.tool()
+@_moodle_tool
 def get_course_contents(course_id: int) -> list[dict]:
     """Return the sections, modules and files of one course as a compact tree with module dates, completion and
     availability. Descriptions are cut at 200 chars; get_module_text gives the full text. Use fileurl with download_file."""
-    try:
-        sections = _client().call("core_course_get_contents", courseid=course_id)
-    except MoodleApiError as exc:
-        raise _tool_error(exc) from None
-    return build_course_tree(sections)
+    return build_course_tree(_client().call("core_course_get_contents", courseid=course_id))
 
 
 @server.tool()
+@_moodle_tool
 def download_file(fileurl: str, course_id: int) -> dict:
     """Download a course file (fileurl from get_course_contents) into the local downloads directory and return its path."""
     try:
         return _download(fileurl, course_id)
-    except MoodleApiError as exc:
-        raise _tool_error(exc) from None
     except OSError as exc:
         raise ToolError(f"File system error: {exc}") from None
 
 
 @server.tool()
+@_moodle_tool
 def get_h5p_content(course_id: int, module_id: int) -> dict:
     """Return the text of an H5P exercise (module of type h5pactivity, id from get_course_contents): questions, answers, flashcards."""
     try:
@@ -162,8 +154,6 @@ def get_h5p_content(course_id: int, module_id: int) -> dict:
             raise ToolError(f"No H5P activity with module id {module_id} in course {course_id}")
         package = _download(activity["package"][0]["fileurl"], course_id)
         meta, content = read_package(Path(package["path"]))
-    except MoodleApiError as exc:
-        raise _tool_error(exc) from None
     except (OSError, KeyError, ValueError) as exc:
         raise ToolError(f"Cannot read H5P package: {exc}") from None
     items, used = [], 0
@@ -240,17 +230,18 @@ def get_module_text(course_id: int, module_id: int) -> dict:
     if not module:
         raise ToolError(f"No module {module_id} in course {course_id}")
     contents = module.get("contents") or []
-    text = _full_text(module.get("description", ""))
+    text = full_text(module.get("description", ""))
     files = [c for c in contents if c.get("type") == "file"]
     if module["modname"] == "page":
         pages = _client().call("mod_page_get_pages_by_courses", **{"courseids[0]": course_id})["pages"]
         page = _find(pages, "coursemodule", module_id)
-        text = "\n\n".join(part for part in (text, _full_text(page.get("content", ""))) if part)
+        text = "\n\n".join(part for part in (text, full_text(page.get("content", ""))) if part)
         files = page.get("contentfiles", [])
     elif module["modname"] == "assign" and not text:
         payload = _client().call("mod_assign_get_assignments", **{"courseids[0]": course_id})
         assignment = _find([a for c in payload["courses"] for a in c["assignments"]], "cmid", module_id)
-        text = _full_text(assignment.get("intro", ""))
+        parts = (full_text(assignment.get("intro", "")), full_text(assignment.get("activity", "")))
+        text = "\n\n".join(part for part in parts if part)
         files += assignment.get("introattachments", []) + assignment.get("introfiles", [])
     text, truncated = cut(text, MAX_TEXT_CHARS)
     return compact(
@@ -370,6 +361,8 @@ def get_recent_changes(days: int = 7) -> dict:
     ]
     changes, warnings, with_updates = [], [], []
     updates = _client().call_many([("core_course_get_updates_since", {"courseid": c["id"], "since": since}) for c in courses])
+    if updates and all(isinstance(u, MoodleApiError) for u in updates):
+        raise _tool_error(updates[0])
     for course, update in zip(courses, updates):
         if isinstance(update, MoodleApiError):
             warnings.append(f"{course['shortname']}: Moodle error {update.errorcode}")
@@ -384,13 +377,12 @@ def get_recent_changes(days: int = 7) -> dict:
         modules = {m["id"]: m for section in sections for m in section.get("modules", [])}
         changes += [summarize_change(course, i, modules.get(i["id"], {})) for i in instances]
     newest_first = [change for _, change in sorted(changes, key=lambda x: x[0], reverse=True)]
-    return compact(
-        {
-            "changes": newest_first[:MAX_CHANGES],
-            "omitted": max(0, len(newest_first) - MAX_CHANGES) or None,
-            "warnings": warnings,
-        }
-    )
+    result = {"changes": newest_first[:MAX_CHANGES]}
+    if len(newest_first) > MAX_CHANGES:
+        result["omitted"] = len(newest_first) - MAX_CHANGES
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 def _download(fileurl: str, course_id: int) -> dict:

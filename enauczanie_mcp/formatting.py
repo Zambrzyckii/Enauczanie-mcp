@@ -9,10 +9,12 @@ _SPACES = re.compile(r"[ \t\r\f\v]+")
 
 _SKIPPED_TAGS = frozenset({"script", "style"})
 _BLOCK_TAGS = frozenset({"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre"})
-_LINE_TAGS = frozenset({"br", "div", "li", "tr"})
+_LINE_TAGS = frozenset({"br", "div", "li", "option", "tr"})
 _MARKERS = ("[x]", "[ ]")
 _CELL_TAGS = frozenset({"td", "th"})
 _HIDDEN_INPUTS = frozenset({"hidden", "submit", "button", "reset", "image"})
+_VOID_TAGS = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"})
+_SHORT_LABEL = re.compile(r"^\[[x ]\] \S{1,3}$")
 _COMPLETION_STATES = {0: "incomplete", 1: "complete", 2: "pass", 3: "fail"}
 
 
@@ -34,21 +36,26 @@ class _TextExtractor(HTMLParser):
         self._skip_tag: str | None = None
         self._skip_depth = 0
         self._href: str | None = None
+        self._link_start = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        hidden = bool(self._skip_classes & set((attributes.get("class") or "").split()))
         if self._skip_tag:
             self._skip_depth += tag == self._skip_tag
-        elif tag in _SKIPPED_TAGS or self._skip_classes & set((attributes.get("class") or "").split()):
+        elif hidden and tag in _VOID_TAGS:
+            return
+        elif tag in _SKIPPED_TAGS or hidden:
             self._skip_tag, self._skip_depth = tag, 1
         elif tag in _BLOCK_TAGS or tag in _LINE_TAGS:
             self.parts.append("\n")
+            if tag == "option" and self._controls and "selected" in attributes and attributes.get("value"):
+                self.parts.append("[x] ")
         elif tag == "a" and self._links:
             self._href = attributes.get("href")
+            self._link_start = len(self.parts)
         elif tag == "input" and self._controls:
             self._handle_input(attributes)
-        elif tag == "option" and self._controls and "selected" in attributes:
-            self.parts.append("[x] ")
 
     def _handle_input(self, attributes: dict[str, str | None]) -> None:
         kind = attributes.get("type") or "text"
@@ -67,7 +74,8 @@ class _TextExtractor(HTMLParser):
         elif tag in _CELL_TAGS:
             self.parts.append(" ")
         elif tag == "a" and self._href:
-            if self._href.startswith("http"):
+            label = "".join(self.parts[self._link_start :]).strip()
+            if self._href.startswith("http") and label != self._href:
                 self.parts.append(f" ({self._href})")
             self._href = None
 
@@ -87,18 +95,24 @@ def html_to_text(
 ) -> str:
     extractor = _TextExtractor(links, controls, skip_classes)
     extractor.feed(strip_multilang(html or ""))
+    extractor.close()
     text = "".join(extractor.parts)
     text = _join_lines(text) if keep_breaks else _WS.sub(" ", text).strip()
     return text if limit is None else cut(text, limit)[0]
 
 
+def full_text(html: str) -> str:
+    return html_to_text(html, None, links=True, keep_breaks=True)
+
+
 def _join_lines(text: str) -> str:
-    """Trim lines, drop blank ones and attach a lone [x] or [ ] marker to the line that follows it."""
+    """Trim lines, drop blank ones and attach a lone marker, or a marker with a short label like "[x] a.", to the
+    line that follows it."""
     lines: list[str] = []
     for line in (_SPACES.sub(" ", raw).strip() for raw in text.split("\n")):
-        if lines and lines[-1] in _MARKERS:
-            if line:
-                lines[-1] += " " + line
+        dangling = bool(lines) and (lines[-1] in _MARKERS or _SHORT_LABEL.match(lines[-1]) is not None)
+        if dangling and line and not line.startswith(_MARKERS):
+            lines[-1] += " " + line
         elif line:
             lines.append(line)
     return "\n".join(lines)
@@ -107,7 +121,7 @@ def _join_lines(text: str) -> str:
 def cut(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
-    return text[: limit - 1].rstrip() + "…", True
+    return text[: max(limit - 1, 0)].rstrip() + "…", True
 
 
 def slugify(text: str) -> str:
