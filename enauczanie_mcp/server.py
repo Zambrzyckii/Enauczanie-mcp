@@ -1,10 +1,11 @@
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from urllib.parse import unquote
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from .assignments import summarize_assignment, summarize_status
 from .config import Settings, load_settings
 from .formatting import build_course_tree, format_timestamp, safe_filename, slugify, strip_multilang
 from .h5p import flatten_content, read_package
@@ -12,6 +13,13 @@ from .moodle_client import MoodleApiError, MoodleClient
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 MAX_H5P_CHARS = 20_000
+MAX_TEXT_CHARS = 20_000
+_HINTS = {
+    "invalidtoken": " Run get_token.py to obtain a new token.",
+    "nopermissions": " The account has no access to this item.",
+    "accessexception": " The account has no access to this item.",
+    "noreview": " The teacher disabled the review of this quiz.",
+}
 
 server = MCPServer(
     "enauczanie",
@@ -34,16 +42,34 @@ def _client() -> MoodleClient:
 
 
 def _tool_error(exc: MoodleApiError) -> ToolError:
-    hint = " Run get_token.py to obtain a new token." if exc.errorcode == "invalidtoken" else ""
-    return ToolError(f"Moodle error {exc.errorcode}: {exc.message}{hint}")
+    return ToolError(f"Moodle error {exc.errorcode}: {exc.message}{_HINTS.get(exc.errorcode, '')}")
+
+
+@lru_cache(maxsize=1)
+def _userid() -> int:
+    return _client().call("core_webservice_get_site_info")["userid"]
+
+
+def _moodle_tool(func):
+    """Map Moodle errors and unexpected response shapes to ToolError, the only exception the SDK shows the model."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except MoodleApiError as exc:
+            raise _tool_error(exc) from None
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ToolError(f"Unexpected Moodle response in {func.__name__}: {exc!r}") from None
+
+    return wrapper
 
 
 @server.tool()
 def list_courses(include_hidden: bool = False) -> list[dict]:
     """List the user's enrolled courses on eNauczanie. Returns id, shortname, fullname and end_date."""
     try:
-        userid = _client().call("core_webservice_get_site_info")["userid"]
-        courses = _client().call("core_enrol_get_users_courses", userid=userid)
+        courses = _client().call("core_enrol_get_users_courses", userid=_userid())
     except MoodleApiError as exc:
         raise _tool_error(exc) from None
     return [
@@ -106,6 +132,25 @@ def get_h5p_content(course_id: int, module_id: int) -> dict:
         "items": items,
         "truncated": used > MAX_H5P_CHARS,
     }
+
+
+@server.tool()
+@_moodle_tool
+def list_assignments(course_id: int) -> dict:
+    """List the assignments of one course (id from list_courses) with instructions, deadlines and attachments.
+    The assignment_id values feed get_assignment_status."""
+    payload = _client().call("mod_assign_get_assignments", **{"courseids[0]": course_id})
+    if not payload["courses"] and payload.get("warnings"):
+        raise ToolError(payload["warnings"][0].get("message", f"No assignments for course {course_id}"))
+    return {"assignments": [summarize_assignment(a) for c in payload["courses"] for a in c["assignments"]]}
+
+
+@server.tool()
+@_moodle_tool
+def get_assignment_status(assignment_id: int) -> dict:
+    """Return the user's submission state, submitted files, grade and teacher feedback for one assignment
+    (assignment_id from list_assignments, not the module id)."""
+    return summarize_status(_client().call("mod_assign_get_submission_status", assignid=assignment_id))
 
 
 def _download(fileurl: str, course_id: int) -> dict:

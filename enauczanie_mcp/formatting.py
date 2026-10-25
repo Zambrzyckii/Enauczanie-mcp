@@ -86,9 +86,13 @@ def html_to_text(
         text = "\n".join(line.strip() for line in text.split("\n")).strip()
     else:
         text = _WS.sub(" ", text).strip()
-    if limit is None or len(text) <= limit:
-        return text
-    return text[: limit - 1].rstrip() + "…"
+    return text if limit is None else cut(text, limit)[0]
+
+
+def cut(text: str, limit: int) -> tuple[str, bool]:
+    if len(text) <= limit:
+        return text, False
+    return text[: limit - 1].rstrip() + "…", True
 
 
 def slugify(text: str) -> str:

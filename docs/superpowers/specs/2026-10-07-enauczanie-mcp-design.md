@@ -113,12 +113,37 @@ texts, image and copyright subtrees are skipped. Output is cut at 20 000
 characters of text with `truncated: true`. No per-library parsing: the key
 names in the path tell the model what each text is.
 
+### list_assignments(course_id: int)
+Added 2026-10-25. Calls `mod_assign_get_assignments` for one course and returns
+`{assignments: [...]}` with `assignment_id` (the id `get_assignment_status` takes),
+`module_id`, `name`, `intro` (full text with link targets and paragraph breaks, cut at
+2 000 chars with `intro_truncated: true`), `instructions` (the separate activity text,
+when the teacher used it), `files` (intro attachments), `opens`, `due`, `cutoff`,
+`grading_due` (local date-times), `max_grade` (when points are used) and
+`submission_types` (enabled submission plugins such as `file` or `onlinetext`). Moodle
+omits `intro` until the assignment opens unless "always show description" is set. An
+unknown course surfaces Moodle's warning as the error. Empty values are omitted.
+
+### get_assignment_status(assignment_id: int)
+Added 2026-10-25. Calls `mod_assign_get_submission_status` for the current user and
+returns `{status (new, draft, submitted, reopened), submitted, locked, can_submit,
+extension_due, grading_status, my_text, my_files, grade, graded, feedback,
+feedback_files}` with empty values omitted. `my_text` is the online text submission,
+`my_files` the submitted files, `feedback` the teacher's comment, `feedback_files` the
+files of the feedback plugins. Of the `editpdf` plugin only the `download` area is
+listed, because it holds the annotated PDF the student sees; its other areas
+(`combined`, `pages`, `stamps` and temporary ones) are internal.
+
 ## Error handling
 
 Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ...}`
 on errors. `MoodleClient.call` raises `MoodleApiError(errorcode, message)`.
-Tools catch it and return a one-line message. For `invalidtoken` the message
-adds: "run get_token.py to obtain a new token". Network, HTTP-protocol, URL and JSON-decoding errors
+Tools catch it and return a one-line message. Hints are appended for `invalidtoken`
+("run get_token.py to obtain a new token"), `nopermissions`, `accessexception` and
+`noreview`. Tools added on 2026-10-25 are wrapped by `_moodle_tool`, which also maps
+`KeyError`, `TypeError` and `ValueError` from an unexpected response shape to a
+`ToolError`, because the SDK shows the model only `ToolError` text and hides every other
+exception behind "Error executing tool". Network, HTTP-protocol, URL and JSON-decoding errors
 (`OSError`, `http.client.HTTPException`, `ValueError`; 30 s per request) are
 mapped to `MoodleApiError("network", ...)` with the token redacted from the text.
 Missing settings fail fast at server start: `__main__.py` loads them before
