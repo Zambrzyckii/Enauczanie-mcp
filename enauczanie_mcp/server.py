@@ -19,6 +19,7 @@ from .formatting import (
     strip_multilang,
     summarize_files,
 )
+from .forums import summarize_discussion, summarize_forum, summarize_post
 from .grades import summarize_course_grade, summarize_grade_item
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
@@ -88,6 +89,17 @@ def _find(items: list[dict], key: str, value) -> dict:
 
 def _full_text(html: str) -> str:
     return html_to_text(html, None, links=True, keep_breaks=True)
+
+
+def _within_budget(items: list[dict], key: str, budget: int) -> tuple[list[dict], int, bool]:
+    """Keep leading items while the total length of their key fits the budget; the flag says whether any were dropped."""
+    kept = []
+    for item in items:
+        budget -= len(item.get(key, ""))
+        if budget < 0:
+            return kept, 0, True
+        kept.append(item)
+    return kept, budget, False
 
 
 @server.tool()
@@ -243,6 +255,41 @@ def get_module_text(course_id: int, module_id: int) -> dict:
             "truncated": truncated or None,
         }
     )
+
+
+@server.tool()
+@_moodle_tool
+def get_forum_discussions(course_id: int, forum_module_id: int | None = None, limit: int = 10) -> dict:
+    """List the latest discussions of a course's forums (type news = teacher announcements), newest first, each with
+    its first post. forum_module_id (from get_course_contents) narrows to one forum; get_discussion_posts gives replies."""
+    forums = _client().call("mod_forum_get_forums_by_courses", **{"courseids[0]": course_id})
+    if forum_module_id is not None:
+        forums = [f for f in forums if f.get("cmid") == forum_module_id]
+        if not forums:
+            raise ToolError(f"No forum with module id {forum_module_id} in course {course_id}")
+    result, budget, truncated = [], MAX_TEXT_CHARS, False
+    for forum in forums:
+        entry = summarize_forum(forum)
+        if forum.get("numdiscussions"):
+            payload = _client().call(
+                "mod_forum_get_forum_discussions", forumid=forum["id"], page=0, perpage=_clamp(limit, 1, 50)
+            )
+            discussions = [summarize_discussion(d) for d in payload["discussions"]]
+            entry["discussions"], budget, dropped = _within_budget(discussions, "message", budget)
+            truncated = truncated or dropped
+        result.append(entry)
+    return {"forums": result, "truncated": True} if truncated else {"forums": result}
+
+
+@server.tool()
+@_moodle_tool
+def get_discussion_posts(discussion_id: int) -> dict:
+    """Return all posts of one forum discussion (discussion_id from get_forum_discussions), oldest first, full text."""
+    payload = _client().call(
+        "mod_forum_get_discussion_posts", discussionid=discussion_id, sortby="created", sortdirection="ASC"
+    )
+    posts, _, truncated = _within_budget([summarize_post(p) for p in payload["posts"]], "message", MAX_TEXT_CHARS)
+    return {"posts": posts, "truncated": True} if truncated else {"posts": posts}
 
 
 def _download(fileurl: str, course_id: int) -> dict:

@@ -168,6 +168,25 @@ seen across all courses: resource, assign, label, subsection, url, page, forum,
 choicegroup, attendance, quiz, folder, h5pactivity, lti, consentform, offlinequiz,
 feedback. No book, lesson or wiki.
 
+### get_forum_discussions(course_id: int, forum_module_id: int | None = None, limit: int = 10)
+Added 2026-10-25. Calls `mod_forum_get_forums_by_courses` (a bare list) and, for every
+forum with `numdiscussions > 0` (or only the forum whose `cmid` equals
+`forum_module_id`), `mod_forum_get_forum_discussions` with `page=0` and
+`perpage=limit` (clamped to 1..50) in Moodle's default order, last post first. Returns
+`{forums: [{forum_id, module_id, name, type, discussions: [{discussion_id, subject,
+author, created, replies, pinned, message, message_truncated, files}]}], truncated}`.
+`type == "news"` marks the teacher announcement forum. `discussion_id` is Moodle's
+`discussion` field; the `id` field of that payload is the first post's id and is not
+exposed. Each message is cut at 1 500 chars (`message_truncated: true`), the whole
+result at 20 000 chars of message text (`truncated: true`, later discussions dropped).
+Author full names are kept, profile pictures and URLs are not.
+
+### get_discussion_posts(discussion_id: int)
+Added 2026-10-25. Calls `mod_forum_get_discussion_posts` sorted by `created` ascending
+and returns `{posts: [{post_id, parent_id, subject, author, created, message, files}],
+truncated}` with full message text, capped at 20 000 chars in total. Never calls any
+`mod_forum_view_*` function, which would mark posts read.
+
 ## Error handling
 
 Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ...}`
