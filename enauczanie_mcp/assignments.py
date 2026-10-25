@@ -37,12 +37,14 @@ def summarize_assignment(assignment: dict) -> dict:
 
 def summarize_status(payload: dict) -> dict:
     attempt = payload.get("lastattempt") or {}
-    submission = attempt.get("submission") or {}
+    # Group assignments carry the shared submission in teamsubmission and leave the user's own one empty.
+    submission = attempt.get("teamsubmission") or attempt.get("submission") or {}
     feedback = payload.get("feedback") or {}
     status = submission.get("status", "new")
     return compact(
         {
             "status": status,
+            "group_submission": bool(attempt.get("teamsubmission")) or None,
             "submitted": format_datetime(submission.get("timemodified")) if status == "submitted" else None,
             "locked": attempt.get("locked") or None,
             "can_submit": attempt.get("cansubmit"),

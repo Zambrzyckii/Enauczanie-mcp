@@ -157,9 +157,12 @@ unknown course surfaces Moodle's warning as the error. Empty values are omitted.
 
 ### get_assignment_status(assignment_id: int)
 Added 2026-10-25. Calls `mod_assign_get_submission_status` for the current user and
-returns `{status (new, draft, submitted, reopened), submitted, locked, can_submit,
-extension_due, grading_status, my_text, my_files, grade, graded, feedback,
-feedback_files}` with empty values omitted. `my_text` is the online text submission,
+returns `{status (new, draft, submitted, reopened), group_submission, submitted, locked,
+can_submit, extension_due, grading_status, my_text, my_files, grade, graded, feedback,
+feedback_files}` with empty values omitted. For group assignments Moodle leaves
+`lastattempt.submission` empty and puts the shared one in `lastattempt.teamsubmission`
+(verified on 12 assignments of one course), which is used instead and flagged with
+`group_submission: true`. `my_text` is the online text submission,
 `my_files` the submitted files, `feedback` the teacher's comment, `feedback_files` the
 files of the feedback plugins. Of the `editpdf` plugin only the `download` area is
 listed, because it holds the annotated PDF the student sees; its other areas
