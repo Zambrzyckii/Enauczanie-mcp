@@ -6,11 +6,11 @@ from pathlib import PurePosixPath
 _MLANG = re.compile(r"\{mlang\s+([\w-]+)\}(.*?)\{mlang\}", re.S)
 _WS = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\r\f\v]+")
-_BLANK_LINES = re.compile(r"\n\s*\n")
 
 _SKIPPED_TAGS = frozenset({"script", "style"})
-_BLOCK_TAGS = frozenset({"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre"})
-_LINE_TAGS = frozenset({"br", "li", "tr"})
+_BLOCK_TAGS = frozenset({"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre"})
+_LINE_TAGS = frozenset({"br", "div", "li", "tr"})
+_MARKERS = ("[x]", "[ ]")
 _CELL_TAGS = frozenset({"td", "th"})
 _HIDDEN_INPUTS = frozenset({"hidden", "submit", "button", "reset", "image"})
 _COMPLETION_STATES = {0: "incomplete", 1: "complete", 2: "pass", 3: "fail"}
@@ -25,18 +25,22 @@ def strip_multilang(text: str, lang: str = "pl") -> str:
 
 
 class _TextExtractor(HTMLParser):
-    def __init__(self, links: bool, controls: bool) -> None:
+    def __init__(self, links: bool, controls: bool, skip_classes: frozenset[str]) -> None:
         super().__init__()
         self.parts: list[str] = []
         self._links = links
         self._controls = controls
+        self._skip_classes = skip_classes
+        self._skip_tag: str | None = None
         self._skip_depth = 0
         self._href: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
-        if tag in _SKIPPED_TAGS:
-            self._skip_depth += 1
+        if self._skip_tag:
+            self._skip_depth += tag == self._skip_tag
+        elif tag in _SKIPPED_TAGS or self._skip_classes & set((attributes.get("class") or "").split()):
+            self._skip_tag, self._skip_depth = tag, 1
         elif tag in _BLOCK_TAGS or tag in _LINE_TAGS:
             self.parts.append("\n")
         elif tag == "a" and self._links:
@@ -54,8 +58,10 @@ class _TextExtractor(HTMLParser):
             self.parts.append(f"[{attributes.get('value') or ''}] ")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _SKIPPED_TAGS:
-            self._skip_depth = max(0, self._skip_depth - 1)
+        if self._skip_tag:
+            if tag == self._skip_tag:
+                self._skip_depth -= 1
+                self._skip_tag = self._skip_tag if self._skip_depth else None
         elif tag in _BLOCK_TAGS:
             self.parts.append("\n")
         elif tag in _CELL_TAGS:
@@ -66,7 +72,7 @@ class _TextExtractor(HTMLParser):
             self._href = None
 
     def handle_data(self, data: str) -> None:
-        if not self._skip_depth:
+        if not self._skip_tag:
             self.parts.append(data)
 
 
@@ -77,16 +83,25 @@ def html_to_text(
     links: bool = False,
     controls: bool = False,
     keep_breaks: bool = False,
+    skip_classes: frozenset[str] = frozenset(),
 ) -> str:
-    extractor = _TextExtractor(links, controls)
+    extractor = _TextExtractor(links, controls, skip_classes)
     extractor.feed(strip_multilang(html or ""))
     text = "".join(extractor.parts)
-    if keep_breaks:
-        text = _BLANK_LINES.sub("\n\n", _SPACES.sub(" ", text))
-        text = "\n".join(line.strip() for line in text.split("\n")).strip()
-    else:
-        text = _WS.sub(" ", text).strip()
+    text = _join_lines(text) if keep_breaks else _WS.sub(" ", text).strip()
     return text if limit is None else cut(text, limit)[0]
+
+
+def _join_lines(text: str) -> str:
+    """Trim lines, drop blank ones and attach a lone [x] or [ ] marker to the line that follows it."""
+    lines: list[str] = []
+    for line in (_SPACES.sub(" ", raw).strip() for raw in text.split("\n")):
+        if lines and lines[-1] in _MARKERS:
+            if line:
+                lines[-1] += " " + line
+        elif line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def cut(text: str, limit: int) -> tuple[str, bool]:

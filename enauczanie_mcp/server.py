@@ -23,7 +23,7 @@ from .forums import summarize_discussion, summarize_forum, summarize_post
 from .grades import summarize_course_grade, summarize_grade_item
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
-from .quizzes import quiz_deadline
+from .quizzes import quiz_deadline, summarize_attempt, summarize_question
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 MAX_H5P_CHARS = 20_000
@@ -290,6 +290,48 @@ def get_discussion_posts(discussion_id: int) -> dict:
     )
     posts, _, truncated = _within_budget([summarize_post(p) for p in payload["posts"]], "message", MAX_TEXT_CHARS)
     return {"posts": posts, "truncated": True} if truncated else {"posts": posts}
+
+
+@server.tool()
+@_moodle_tool
+def get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = None) -> dict:
+    """Review a finished quiz attempt (module_id from get_course_contents): every question with the chosen answer
+    marked [x], its mark and the correct answer, when the teacher allows review. Default is the latest attempt."""
+    quizzes = _client().call("mod_quiz_get_quizzes_by_courses", **{"courseids[0]": course_id})["quizzes"]
+    quiz = _find(quizzes, "coursemodule", module_id)
+    if not quiz:
+        raise ToolError(f"No quiz with module id {module_id} in course {course_id}")
+    attempts = _client().call("mod_quiz_get_user_attempts", quizid=quiz["id"], status="finished")["attempts"]
+    if not attempts:
+        raise ToolError("No finished attempts for this quiz")
+    chosen = _find(attempts, "id", attempt_id) if attempt_id is not None else max(attempts, key=lambda a: a["attempt"])
+    if not chosen:
+        raise ToolError(f"No finished attempt {attempt_id} for this quiz")
+    result = {
+        "quiz_id": quiz["id"],
+        "name": strip_multilang(quiz["name"]),
+        "max_grade": quiz.get("grade"),
+        "attempts": [summarize_attempt(a) for a in attempts],
+        "reviewed_attempt": chosen["id"],
+    }
+    try:
+        review = _client().call("mod_quiz_get_attempt_review", attemptid=chosen["id"])
+    except MoodleApiError as exc:
+        if exc.errorcode != "noreview":
+            raise
+        return {**result, "review_available": False, "note": "The teacher disabled the review of this quiz."}
+    questions = [summarize_question(q) for q in review["questions"]]
+    kept, _, truncated = _within_budget(questions, "text", MAX_TEXT_CHARS)
+    grade = review.get("grade")
+    return compact(
+        {
+            **result,
+            "grade": round(grade, 2) if isinstance(grade, (int, float)) else grade,
+            "questions": kept,
+            "omitted": len(questions) - len(kept) or None,
+            "truncated": truncated or None,
+        }
+    )
 
 
 def _download(fileurl: str, course_id: int) -> dict:

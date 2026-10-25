@@ -54,7 +54,8 @@ Layering: `moodle_client.py` knows HTTP and Moodle's response shape only.
 `html_to_text` removes `{mlang}` blocks of other languages (Polish wins), drops
 `<script>` and `<style>`, joins inline tags without extra spaces and takes keyword flags: `links` appends absolute link targets, `controls`
 marks checked radios and checkboxes as `[x]` (how a quiz review shows the chosen
-answer), `keep_breaks` keeps paragraph and list breaks instead of one line.
+answer), `keep_breaks` keeps one line per block or list item instead of a single line,
+`skip_classes` drops subtrees by CSS class (used for quiz review chrome).
 
 Dependencies: `mcp` (2.3.0) only. The package is installed into the venv with
 `pip install -e .`, because Claude Code starts the server from an arbitrary
@@ -186,6 +187,21 @@ Added 2026-10-25. Calls `mod_forum_get_discussion_posts` sorted by `created` asc
 and returns `{posts: [{post_id, parent_id, subject, author, created, message, files}],
 truncated}` with full message text, capped at 20 000 chars in total. Never calls any
 `mod_forum_view_*` function, which would mark posts read.
+
+### get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = None)
+Added 2026-10-25. Calls `mod_quiz_get_quizzes_by_courses` (quiz by `coursemodule`),
+`mod_quiz_get_user_attempts` with `status=finished` and `mod_quiz_get_attempt_review`
+for the given attempt or the one with the highest attempt number. Returns `{quiz_id,
+name, max_grade, attempts: [{attempt_id, number, state, finished, sum_grades}],
+reviewed_attempt, grade, questions: [{number, type, state, mark, max_mark, text}],
+omitted, truncated}`. `text` is the rendered question with the chosen radio or checkbox
+marked `[x]`, typed answers in brackets and, when the teacher shows it, the feedback and
+correct answer; Moodle's header, flag, control and screen-reader blocks (classes `info`,
+`questionflag`, `im-controls`, `accesshide`, `sr-only`, `visually-hidden`) are dropped.
+Questions beyond 20 000 chars of text are dropped and counted in `omitted`. When the
+review call fails with `noreview` (verified: the attempts call still works) the result
+carries the attempts with `review_available: false` instead of an error. No finished
+attempt or an unknown attempt id is an error. Attempts are never started.
 
 ## Error handling
 
