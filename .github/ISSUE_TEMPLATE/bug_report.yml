@@ -1,0 +1,32 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste your `MOODLE_TOKEN` or the contents of `.env`. Remove other people's names from tool output.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Which tool you called, with which arguments, what you expected and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version and the `MOODLE_URL` instance (for example `/2025`).
