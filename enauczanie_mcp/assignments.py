@@ -72,3 +72,15 @@ def plugin_files(plugins: list[dict]) -> list[dict]:
                 continue
             files.extend(area.get("files", []))
     return summarize_files(files)
+
+
+def assignment_deadline(assignment: dict, course: dict) -> tuple[int, dict]:
+    return assignment.get("duedate", 0), {
+        "course_id": course["id"],
+        "course": course["shortname"],
+        "type": "assign",
+        "name": strip_multilang(assignment["name"]),
+        "assignment_id": assignment["id"],
+        "module_id": assignment["cmid"],
+        "due": format_datetime(assignment.get("duedate")),
+    }

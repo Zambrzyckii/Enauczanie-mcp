@@ -134,6 +134,15 @@ files of the feedback plugins. Of the `editpdf` plugin only the `download` area 
 listed, because it holds the annotated PDF the student sees; its other areas
 (`combined`, `pages`, `stamps` and temporary ones) are internal.
 
+### list_deadlines(days_ahead: int = 14, days_back: int = 1)
+Added 2026-10-25. Two calls cover every enrolled course: `mod_assign_get_assignments`
+and `mod_quiz_get_quizzes_by_courses` without `courseids` (verified: 23 courses, 96
+assignments, 11 quizzes, about 1.5 s). Returns `{deadlines: [{course_id, course
+(shortname), type (assign or quiz), name, assignment_id or quiz_id, module_id, due}]}`
+for assignment `duedate` and quiz `timeclose` values inside the window, soonest first.
+Items without a date are skipped. Both window sizes are clamped to 0..365 days.
+Course names for quizzes come from the `courses` list of the assignments payload.
+
 ## Error handling
 
 Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ...}`

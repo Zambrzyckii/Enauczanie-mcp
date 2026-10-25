@@ -1,3 +1,4 @@
+import time
 from functools import lru_cache, wraps
 from pathlib import Path
 from urllib.parse import unquote
@@ -5,11 +6,12 @@ from urllib.parse import unquote
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .assignments import summarize_assignment, summarize_status
+from .assignments import assignment_deadline, summarize_assignment, summarize_status
 from .config import Settings, load_settings
 from .formatting import build_course_tree, format_timestamp, safe_filename, slugify, strip_multilang
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
+from .quizzes import quiz_deadline
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 MAX_H5P_CHARS = 20_000
@@ -63,6 +65,10 @@ def _moodle_tool(func):
             raise ToolError(f"Unexpected Moodle response in {func.__name__}: {exc!r}") from None
 
     return wrapper
+
+
+def _clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
 
 
 @server.tool()
@@ -151,6 +157,21 @@ def get_assignment_status(assignment_id: int) -> dict:
     """Return the user's submission state, submitted files, grade and teacher feedback for one assignment
     (assignment_id from list_assignments, not the module id)."""
     return summarize_status(_client().call("mod_assign_get_submission_status", assignid=assignment_id))
+
+
+@server.tool()
+@_moodle_tool
+def list_deadlines(days_ahead: int = 14, days_back: int = 1) -> dict:
+    """List assignment due dates and quiz closing times across all courses, from days_back days ago to days_ahead
+    days ahead, soonest first."""
+    now = time.time()
+    start, end = now - _clamp(days_back, 0, 365) * 86400, now + _clamp(days_ahead, 0, 365) * 86400
+    assignments = _client().call("mod_assign_get_assignments")
+    quizzes = _client().call("mod_quiz_get_quizzes_by_courses")["quizzes"]
+    course_names = {c["id"]: c["shortname"] for c in assignments["courses"]}
+    deadlines = [assignment_deadline(a, c) for c in assignments["courses"] for a in c["assignments"]]
+    deadlines += [quiz_deadline(q, course_names) for q in quizzes]
+    return {"deadlines": [d for ts, d in sorted(deadlines, key=lambda x: x[0]) if ts and start <= ts <= end]}
 
 
 def _download(fileurl: str, course_id: int) -> dict:
