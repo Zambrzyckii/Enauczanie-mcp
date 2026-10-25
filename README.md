@@ -1,5 +1,6 @@
 # enauczanie-mcp
 
+[![Release](https://img.shields.io/github/v/release/Zambrzyckii/Enauczanie-mcp)](https://github.com/Zambrzyckii/Enauczanie-mcp/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ![Python](https://img.shields.io/badge/Python_3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
@@ -80,6 +81,22 @@ claude mcp add enauczanie -s user -- "$(pwd)/.venv/bin/python" -m enauczanie_mcp
 Start a new Claude Code session and ask, for example, what is due in the next two weeks,
 for the grades of a course, for the latest announcements or for a review of a finished
 quiz.
+
+## Prebuilt image
+
+Each release publishes an image to GHCR and attaches a wheel and an sdist. Both hold only the
+server, so the token still comes from `get_token.py` in a clone. Mount the download folder at
+the same path as on the host, so the paths that `download_file` returns open outside the
+container.
+
+```bash
+mkdir -p ~/enauczanie-downloads
+claude mcp add enauczanie -s user -- docker run -i --rm --env-file "$(pwd)/.env" \
+  --user "$(id -u):$(id -g)" \
+  -e ENAUCZANIE_DOWNLOAD_DIR="$HOME/enauczanie-downloads" \
+  -v "$HOME/enauczanie-downloads:$HOME/enauczanie-downloads" \
+  ghcr.io/zambrzyckii/enauczanie-mcp:0.1.0
+```
 
 ## How it works
 
