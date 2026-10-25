@@ -48,7 +48,7 @@ of scope.
     ├── __main__.py             # MCPServer.run("stdio")
     ├── config.py               # Settings loaded from env vars or the project .env
     ├── moodle_client.py        # MoodleClient: call(), call_many(), download(); MoodleApiError
-    ├── formatting.py           # strip multilang, HTML -> text, compact course tree
+    ├── formatting.py           # strip multilang, HTML -> text, compact course tree, shared helpers
     ├── h5p.py                  # read .h5p packages, flatten content.json to text
     ├── assignments.py          # pure transforms of mod_assign payloads
     ├── grades.py               # pure transforms of gradereport payloads

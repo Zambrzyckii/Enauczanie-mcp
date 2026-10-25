@@ -118,6 +118,26 @@ def _join_lines(text: str) -> str:
     return "\n".join(lines)
 
 
+def clamp(value: int, low: int, high: int) -> int:
+    return max(low, min(high, value))
+
+
+def find(items: list[dict], key: str, value) -> dict:
+    return next((item for item in items if item.get(key) == value), {})
+
+
+def within_budget(items: list[dict], key: str, budget: int) -> tuple[list[dict], int, bool]:
+    """Keep leading items while the total length of their key fits the budget, always at least the first one; the
+    flag says whether any were dropped."""
+    kept = []
+    for item in items:
+        budget -= len(item.get(key, ""))
+        if budget < 0 and kept:
+            return kept, 0, True
+        kept.append(item)
+    return kept, max(budget, 0), False
+
+
 def cut(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False

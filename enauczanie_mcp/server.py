@@ -10,14 +10,17 @@ from .assignments import assignment_deadline, summarize_assignment, summarize_st
 from .config import Settings, load_settings
 from .formatting import (
     build_course_tree,
+    clamp,
     compact,
     cut,
+    find,
     format_timestamp,
     full_text,
     safe_filename,
     slugify,
     strip_multilang,
     summarize_files,
+    within_budget,
 )
 from .forums import summarize_discussion, summarize_forum, summarize_post
 from .grades import summarize_course_grade, summarize_grade_item
@@ -86,26 +89,6 @@ def _moodle_tool(func):
             raise ToolError(f"Unexpected Moodle response in {func.__name__}: {exc!r}") from None
 
     return wrapper
-
-
-def _clamp(value: int, low: int, high: int) -> int:
-    return max(low, min(high, value))
-
-
-def _find(items: list[dict], key: str, value) -> dict:
-    return next((item for item in items if item.get(key) == value), {})
-
-
-def _within_budget(items: list[dict], key: str, budget: int) -> tuple[list[dict], int, bool]:
-    """Keep leading items while the total length of their key fits the budget, always at least the first one; the
-    flag says whether any were dropped."""
-    kept = []
-    for item in items:
-        budget -= len(item.get(key, ""))
-        if budget < 0 and kept:
-            return kept, 0, True
-        kept.append(item)
-    return kept, max(budget, 0), False
 
 
 @server.tool()
@@ -195,7 +178,7 @@ def list_deadlines(days_ahead: int = 14, days_back: int = 1) -> dict:
     """List assignment due dates and quiz closing times across all courses, from days_back days ago to days_ahead
     days ahead, soonest first."""
     now = time.time()
-    start, end = now - _clamp(days_back, 0, 365) * 86400, now + _clamp(days_ahead, 0, 365) * 86400
+    start, end = now - clamp(days_back, 0, 365) * 86400, now + clamp(days_ahead, 0, 365) * 86400
     assignments = _client().call("mod_assign_get_assignments")
     quizzes = _client().call("mod_quiz_get_quizzes_by_courses")["quizzes"]
     course_names = {c["id"]: c["shortname"] for c in assignments["courses"]}
@@ -226,7 +209,7 @@ def get_module_text(course_id: int, module_id: int) -> dict:
     sections = _client().call(
         "core_course_get_contents", courseid=course_id, **{"options[0][name]": "cmid", "options[0][value]": module_id}
     )
-    module = _find([m for s in sections for m in s.get("modules", [])], "id", module_id)
+    module = find([m for s in sections for m in s.get("modules", [])], "id", module_id)
     if not module:
         raise ToolError(f"No module {module_id} in course {course_id}")
     contents = module.get("contents") or []
@@ -234,12 +217,12 @@ def get_module_text(course_id: int, module_id: int) -> dict:
     files = [c for c in contents if c.get("type") == "file"]
     if module["modname"] == "page":
         pages = _client().call("mod_page_get_pages_by_courses", **{"courseids[0]": course_id})["pages"]
-        page = _find(pages, "coursemodule", module_id)
+        page = find(pages, "coursemodule", module_id)
         text = "\n\n".join(part for part in (text, full_text(page.get("content", ""))) if part)
         files = page.get("contentfiles", [])
     elif module["modname"] == "assign" and not text:
         payload = _client().call("mod_assign_get_assignments", **{"courseids[0]": course_id})
-        assignment = _find([a for c in payload["courses"] for a in c["assignments"]], "cmid", module_id)
+        assignment = find([a for c in payload["courses"] for a in c["assignments"]], "cmid", module_id)
         parts = (full_text(assignment.get("intro", "")), full_text(assignment.get("activity", "")))
         text = "\n\n".join(part for part in parts if part)
         files += assignment.get("introattachments", []) + assignment.get("introfiles", [])
@@ -272,10 +255,10 @@ def get_forum_discussions(course_id: int, forum_module_id: int | None = None, li
         entry = summarize_forum(forum)
         if forum.get("numdiscussions"):
             payload = _client().call(
-                "mod_forum_get_forum_discussions", forumid=forum["id"], page=0, perpage=_clamp(limit, 1, 50)
+                "mod_forum_get_forum_discussions", forumid=forum["id"], page=0, perpage=clamp(limit, 1, 50)
             )
             discussions = [summarize_discussion(d) for d in payload["discussions"]]
-            entry["discussions"], budget, dropped = _within_budget(discussions, "message", budget)
+            entry["discussions"], budget, dropped = within_budget(discussions, "message", budget)
             truncated = truncated or dropped
         result.append(entry)
     return {"forums": result, "truncated": True} if truncated else {"forums": result}
@@ -288,7 +271,7 @@ def get_discussion_posts(discussion_id: int) -> dict:
     payload = _client().call(
         "mod_forum_get_discussion_posts", discussionid=discussion_id, sortby="created", sortdirection="ASC"
     )
-    posts, _, truncated = _within_budget([summarize_post(p) for p in payload["posts"]], "message", MAX_TEXT_CHARS)
+    posts, _, truncated = within_budget([summarize_post(p) for p in payload["posts"]], "message", MAX_TEXT_CHARS)
     return {"posts": posts, "truncated": True} if truncated else {"posts": posts}
 
 
@@ -298,13 +281,13 @@ def get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = Non
     """Review a finished quiz attempt (module_id from get_course_contents): every question with the chosen answer
     marked [x], its mark and the correct answer, when the teacher allows review. Default is the latest attempt."""
     quizzes = _client().call("mod_quiz_get_quizzes_by_courses", **{"courseids[0]": course_id})["quizzes"]
-    quiz = _find(quizzes, "coursemodule", module_id)
+    quiz = find(quizzes, "coursemodule", module_id)
     if not quiz:
         raise ToolError(f"No quiz with module id {module_id} in course {course_id}")
     attempts = _client().call("mod_quiz_get_user_attempts", quizid=quiz["id"], status="finished")["attempts"]
     if not attempts:
         raise ToolError("No finished attempts for this quiz")
-    chosen = _find(attempts, "id", attempt_id) if attempt_id is not None else max(attempts, key=lambda a: a["attempt"])
+    chosen = find(attempts, "id", attempt_id) if attempt_id is not None else max(attempts, key=lambda a: a["attempt"])
     if not chosen:
         raise ToolError(f"No finished attempt {attempt_id} for this quiz")
     result = {
@@ -321,7 +304,7 @@ def get_quiz_review(course_id: int, module_id: int, attempt_id: int | None = Non
             raise
         return {**result, "review_available": False, "note": "The teacher disabled the review of this quiz."}
     questions = [summarize_question(q) for q in review["questions"]]
-    kept, _, truncated = _within_budget(questions, "text", MAX_TEXT_CHARS)
+    kept, _, truncated = within_budget(questions, "text", MAX_TEXT_CHARS)
     grade = review.get("grade")
     return compact(
         {
@@ -340,7 +323,7 @@ def get_notifications(limit: int = 20) -> dict:
     """Return the user's latest Moodle notifications (new forum posts, submission confirmations, grades) with the
     unread count, newest first."""
     payload = _client().call(
-        "message_popup_get_popup_notifications", useridto=_userid(), newestfirst=1, limit=_clamp(limit, 1, 50)
+        "message_popup_get_popup_notifications", useridto=_userid(), newestfirst=1, limit=clamp(limit, 1, 50)
     )
     return {
         "unread": payload.get("unreadcount", 0),
@@ -353,7 +336,7 @@ def get_notifications(limit: int = 20) -> dict:
 def get_recent_changes(days: int = 7) -> dict:
     """List what changed in the user's current courses in the last days (new announcements and posts, new or
     changed files, assignment submissions and grades), per module, newest first."""
-    since = int(time.time()) - _clamp(days, 1, 60) * 86400
+    since = int(time.time()) - clamp(days, 1, 60) * 86400
     courses = [
         c
         for c in _client().call("core_enrol_get_users_courses", userid=_userid())
