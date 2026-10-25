@@ -87,7 +87,8 @@ quiz.
 Each release publishes an image to GHCR and attaches a wheel and an sdist. Both hold only the
 server, so the token still comes from `get_token.py` in a clone. Mount the download folder at
 the same path as on the host, so the paths that `download_file` returns open outside the
-container.
+container. The token then also sits in the container's environment, where `docker inspect`
+shows it.
 
 ```bash
 mkdir -p ~/enauczanie-downloads
