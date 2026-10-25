@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from urllib.parse import unquote
 
 from mcp.server import MCPServer
@@ -6,9 +7,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from .config import Settings, load_settings
 from .formatting import build_course_tree, format_timestamp, safe_filename, slugify, strip_multilang
+from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
 
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+MAX_H5P_CHARS = 20_000
 
 server = MCPServer(
     "enauczanie",
@@ -69,17 +72,49 @@ def get_course_contents(course_id: int) -> list[dict]:
 def download_file(fileurl: str, course_id: int) -> dict:
     """Download a course file (fileurl from get_course_contents) into the local downloads directory and return its path."""
     try:
-        segments = _client().file_segments(fileurl)
-        course = _client().call("core_course_get_courses_by_field", field="id", value=course_id)["courses"]
-        shortname = course[0]["shortname"] if course else str(course_id)
-        # pluginfile layout: contextid/component/filearea/itemid/<filepath...>/filename
-        relative = [safe_filename(unquote(segment)) for segment in [segments[0], *segments[4:]]]
-        dest = _settings().download_dir.joinpath(slugify(shortname), *relative)
-        if dest.exists():
-            return {"path": str(dest), "size": dest.stat().st_size, "skipped": True}
-        size = _client().download(fileurl, dest, MAX_DOWNLOAD_BYTES)
+        return _download(fileurl, course_id)
     except MoodleApiError as exc:
         raise _tool_error(exc) from None
     except OSError as exc:
         raise ToolError(f"File system error: {exc}") from None
+
+
+@server.tool()
+def get_h5p_content(course_id: int, module_id: int) -> dict:
+    """Return the text of an H5P exercise (module of type h5pactivity, id from get_course_contents): questions, answers, flashcards."""
+    try:
+        activities = _client().call("mod_h5pactivity_get_h5pactivities_by_courses", **{"courseids[0]": course_id})
+        activity = next((a for a in activities["h5pactivities"] if a["coursemodule"] == module_id), None)
+        if activity is None:
+            raise ToolError(f"No H5P activity with module id {module_id} in course {course_id}")
+        package = _download(activity["package"][0]["fileurl"], course_id)
+        meta, content = read_package(Path(package["path"]))
+    except MoodleApiError as exc:
+        raise _tool_error(exc) from None
+    except (OSError, KeyError, ValueError) as exc:
+        raise ToolError(f"Cannot read H5P package: {exc}") from None
+    items, used = [], 0
+    for item in flatten_content(content):
+        used += len(item["text"])
+        if used > MAX_H5P_CHARS:
+            break
+        items.append(item)
+    return {
+        "name": strip_multilang(activity["name"]),
+        "library": meta.get("mainLibrary"),
+        "items": items,
+        "truncated": used > MAX_H5P_CHARS,
+    }
+
+
+def _download(fileurl: str, course_id: int) -> dict:
+    segments = _client().file_segments(fileurl)
+    course = _client().call("core_course_get_courses_by_field", field="id", value=course_id)["courses"]
+    shortname = course[0]["shortname"] if course else str(course_id)
+    # pluginfile layout: contextid/component/filearea/itemid/<filepath...>/filename
+    relative = [safe_filename(unquote(segment)) for segment in [segments[0], *segments[4:]]]
+    dest = _settings().download_dir.joinpath(slugify(shortname), *relative)
+    if dest.exists():
+        return {"path": str(dest), "size": dest.stat().st_size, "skipped": True}
+    size = _client().download(fileurl, dest, MAX_DOWNLOAD_BYTES)
     return {"path": str(dest), "size": size, "skipped": False}

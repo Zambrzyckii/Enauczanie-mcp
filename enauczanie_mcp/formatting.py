@@ -25,11 +25,13 @@ class _TextExtractor(HTMLParser):
         self.parts.append(data)
 
 
-def html_to_text(html: str, limit: int = 200) -> str:
+def html_to_text(html: str, limit: int | None = 200) -> str:
     extractor = _TextExtractor()
     extractor.feed(html or "")
     text = _WS.sub(" ", unescape(" ".join(extractor.parts))).strip()
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    if limit is None or len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def slugify(text: str) -> str:
@@ -51,6 +53,7 @@ def summarize_module(module: dict) -> dict:
     contents = module.get("contents") or []
     links = [c["fileurl"] for c in contents if c.get("type") == "url"]
     return {
+        "id": module["id"],
         "type": module["modname"],
         "name": strip_multilang(module.get("name", "")),
         "description": html_to_text(module.get("description", "")),

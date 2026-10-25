@@ -45,6 +45,7 @@ operations are out of scope for this iteration.
     ├── config.py               # Settings loaded from env vars or the project .env
     ├── moodle_client.py        # MoodleClient: call(), download(); MoodleApiError
     ├── formatting.py           # strip multilang, HTML -> text, compact course tree
+    ├── h5p.py                  # read .h5p packages, flatten content.json to text
     └── server.py               # MCPServer instance and the three tools
 ```
 
@@ -71,7 +72,7 @@ Courses with `hidden == true` are omitted unless `include_hidden` is set.
 
 ### get_course_contents(course_id: int)
 Calls `core_course_get_contents`. Returns a compact tree:
-sections -> modules -> files. Per module: `type` (modname), `name`,
+sections -> modules -> files. Per module: `id` (course module id), `type` (modname), `name`,
 `description` (HTML converted to plain text, truncated to ~200 chars),
 `url` (for `url` modules), `files` (list of `{filename, size, mime, fileurl,
 modified}`). `subsection` modules are rendered as nested sections.
@@ -89,6 +90,19 @@ Redirects are not followed. Files larger than 200 MB are refused, both by
 `Content-Length` and by counting streamed bytes. If the destination already
 exists the download is skipped (delete it to re-download). The token never
 appears in any tool result.
+
+### get_h5p_content(course_id: int, module_id: int)
+Added 2026-10-25. Calls `mod_h5pactivity_get_h5pactivities_by_courses`, finds the
+activity whose `coursemodule` equals `module_id` (the `id` shown by
+`get_course_contents`), downloads its `.h5p` package through the same path as
+`download_file` (cached in `downloads/`), reads `content/content.json` from the
+zip and returns `{name, library, items, truncated}`. `items` is a flat list of
+`{path, text}` in document order: strings under content keys (`text`, `answer`,
+`answers`, `question`, `questions`, `title`, `description`, `tip`, feedback
+fields) with HTML removed, plus `correct` booleans. UI strings, accessibility
+texts, image and copyright subtrees are skipped. Output is cut at 20 000
+characters of text with `truncated: true`. No per-library parsing: the key
+names in the path tell the model what each text is.
 
 ## Error handling
 
