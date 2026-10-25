@@ -1,8 +1,10 @@
-"""Throwaway helper: obtain a Moodle web service token via the mobile-app launch flow.
+"""Obtain a Moodle web service token via the mobile-app launch flow.
 
-Run without arguments to print the launch URL (and remember the passport).
-Registered as the x-scheme-handler for moodlemobile://, it is then invoked by the
-browser with the redirect URL, verifies the passport and stores the token in .env.
+`python3 get_token.py --install-handler` registers this script as the xdg handler for
+moodlemobile:// links (Linux). `python3 get_token.py` prints the launch URL and remembers
+the passport. After the login the browser calls the handler with the redirect URL, which
+verifies the passport and stores the token in .env. On systems without xdg, pass the
+moodlemobile://... URL from the browser as the argument instead.
 """
 import base64
 import hashlib
@@ -20,6 +22,16 @@ SERVICE = "moodle_mobile_app"
 PASSPORT_FILE = os.path.join(HERE, ".passport")
 RESULT_FILE = os.path.join(HERE, "token_result.txt")
 REQUIRED_FUNCTIONS = ("core_course_get_contents", "core_enrol_get_users_courses")
+HANDLER_NAME = "moodle-token-handler.desktop"
+DESKTOP_ENTRY = """[Desktop Entry]
+Type=Application
+Name=Moodle Token Handler
+Comment=Captures the moodlemobile:// token redirect for enauczanie-mcp
+Exec={python} -I {script} %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/moodlemobile;
+"""
 
 
 def ws_call(token: str, function: str, **params) -> dict:
@@ -28,6 +40,21 @@ def ws_call(token: str, function: str, **params) -> dict:
     ).encode()
     with urllib.request.urlopen(f"{BASE_URL}/webservice/rest/server.php", data=data, timeout=30) as resp:
         return json.load(resp)
+
+
+def desktop_entry() -> str:
+    return DESKTOP_ENTRY.format(python=sys.executable, script=os.path.join(HERE, "get_token.py"))
+
+
+def install_handler() -> None:
+    applications = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "applications")
+    os.makedirs(applications, exist_ok=True)
+    path = os.path.join(applications, HANDLER_NAME)
+    with open(path, "w") as f:
+        f.write(desktop_entry())
+    subprocess.run(["update-desktop-database", applications], check=False)
+    subprocess.run(["xdg-mime", "default", HANDLER_NAME, "x-scheme-handler/moodlemobile"], check=True)
+    print(f"Registered {path} for moodlemobile:// links.")
 
 
 def print_launch_url() -> None:
@@ -70,6 +97,9 @@ def handle_token(url: str) -> str:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print_launch_url()
+        sys.exit(0)
+    if sys.argv[1] == "--install-handler":
+        install_handler()
         sys.exit(0)
     try:
         result = handle_token(sys.argv[1])
