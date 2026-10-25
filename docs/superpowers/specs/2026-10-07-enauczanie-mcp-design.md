@@ -1,7 +1,7 @@
 # enauczanie-mcp – design
 
 Date: 2026-10-07
-Status: approved in conversation, pending written review
+Status: implemented 2026-10-25
 
 ## Goal
 
@@ -78,8 +78,8 @@ their text.
 ### download_file(fileurl: str, course_id: int)
 Validates that `fileurl` starts with `MOODLE_URL`, appends `token=` server-side,
 streams the file to `downloads/<shortname-slug>/<filename>` and returns
-`{path, size, skipped}`. If a file of the same name and size already exists
-the download is skipped. Files larger than 200 MB are refused. The token never
+`{path, size, skipped}`. If a file of the same name already exists the download
+is skipped (delete it to re-download). Files larger than 200 MB are refused. The token never
 appears in any tool result.
 
 ## Error handling
