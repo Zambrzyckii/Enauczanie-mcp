@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Moodle Token Handler
+Comment=Captures the moodlemobile:// token redirect for enauczanie-mcp
+Exec=/usr/bin/python3 -I /home/bob/enauczanie-mcp/get_token.py %u
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/moodlemobile;

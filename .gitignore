@@ -1,0 +1,7 @@
+.env
+.venv/
+downloads/
+__pycache__/
+.passport
+token_result.txt
+.superpowers/
