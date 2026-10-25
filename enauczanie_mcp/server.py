@@ -60,7 +60,8 @@ def list_courses(include_hidden: bool = False) -> list[dict]:
 
 @server.tool()
 def get_course_contents(course_id: int) -> list[dict]:
-    """Return the sections, modules and files of one course as a compact tree. Use fileurl values with download_file."""
+    """Return the sections, modules and files of one course as a compact tree with module dates, completion and
+    availability. Descriptions are cut at 200 chars; get_module_text gives the full text. Use fileurl with download_file."""
     try:
         sections = _client().call("core_course_get_contents", courseid=course_id)
     except MoodleApiError as exc:

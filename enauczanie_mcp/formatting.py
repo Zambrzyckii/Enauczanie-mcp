@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
 
@@ -13,6 +13,7 @@ _BLOCK_TAGS = frozenset({"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "
 _LINE_TAGS = frozenset({"br", "li", "tr"})
 _CELL_TAGS = frozenset({"td", "th"})
 _HIDDEN_INPUTS = frozenset({"hidden", "submit", "button", "reset", "image"})
+_COMPLETION_STATES = {0: "incomplete", 1: "complete", 2: "pass", 3: "fail"}
 
 
 def strip_multilang(text: str, lang: str = "pl") -> str:
@@ -102,41 +103,67 @@ def safe_filename(name: str) -> str:
 def format_timestamp(ts: int | None) -> str | None:
     if not ts:
         return None
-    return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+    return datetime.fromtimestamp(ts).date().isoformat()
+
+
+def format_datetime(ts: int | None) -> str | None:
+    if not ts:
+        return None
+    return datetime.fromtimestamp(ts).astimezone().isoformat(timespec="minutes")
+
+
+def compact(data: dict) -> dict:
+    return {key: value for key, value in data.items() if value not in (None, "", [], {})}
+
+
+def summarize_files(items: list[dict]) -> list[dict]:
+    return [
+        {
+            "filename": item["filename"],
+            "size": item.get("filesize"),
+            "mime": item.get("mimetype"),
+            "fileurl": item["fileurl"],
+            "modified": format_timestamp(item.get("timemodified")),
+        }
+        for item in items
+    ]
 
 
 def summarize_module(module: dict) -> dict:
     contents = module.get("contents") or []
     links = [c["fileurl"] for c in contents if c.get("type") == "url"]
-    return {
+    # A page module lists only a synthetic index.html; its body comes from get_module_text.
+    files = [c for c in contents if c.get("type") == "file"] if module["modname"] != "page" else []
+    completion = module.get("completiondata") or {}
+    summary = {
         "id": module["id"],
         "type": module["modname"],
         "name": strip_multilang(module.get("name", "")),
         "description": html_to_text(module.get("description", "")),
         "url": links[0] if links else None,
-        "files": [
-            {
-                "filename": c["filename"],
-                "size": c.get("filesize"),
-                "mime": c.get("mimetype"),
-                "fileurl": c["fileurl"],
-                "modified": format_timestamp(c.get("timemodified")),
-            }
-            for c in contents
-            if c.get("type") == "file"
-        ],
+        "files": summarize_files(files),
+        "dates": {
+            d.get("dataid") or d["label"].rstrip(": "): format_datetime(d["timestamp"]) for d in module.get("dates") or []
+        },
+        "completion": _COMPLETION_STATES.get(completion.get("state")) if completion.get("hascompletion") else None,
     }
+    if not module.get("uservisible", True):
+        summary["available"] = False
+        summary["availability"] = html_to_text(module.get("availabilityinfo", ""), 300)
+    return compact(summary)
 
 
 def build_course_tree(sections: list[dict]) -> list[dict]:
     tree = []
     for section in sections:
-        modules = [m for m in section.get("modules", []) if m.get("uservisible", True)]
+        modules = [m for m in section.get("modules", []) if m.get("uservisible", True) or m.get("availabilityinfo")]
         tree.append(
-            {
-                "section": strip_multilang(section.get("name", "")),
-                "summary": html_to_text(section.get("summary", "")),
-                "modules": [summarize_module(m) for m in modules],
-            }
+            compact(
+                {
+                    "section": strip_multilang(section.get("name", "")),
+                    "summary": html_to_text(section.get("summary", "")),
+                    "modules": [summarize_module(m) for m in modules],
+                }
+            )
         )
     return tree

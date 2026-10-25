@@ -77,11 +77,16 @@ Courses with `hidden == true` are omitted unless `include_hidden` is set.
 ### get_course_contents(course_id: int)
 Calls `core_course_get_contents`. Returns a compact tree:
 sections -> modules -> files. Per module: `id` (course module id), `type` (modname), `name`,
-`description` (HTML converted to plain text, truncated to ~200 chars),
-`url` (for `url` modules), `files` (list of `{filename, size, mime, fileurl,
-modified}`). `subsection` modules are rendered as nested sections.
-Modules with `uservisible == false` are omitted. `label` modules keep only
-their text.
+`description` (HTML converted to plain text, truncated to ~200 chars; `get_module_text`
+returns the full text), `url` (for `url` modules), `files` (list of `{filename, size, mime,
+fileurl, modified}`), `dates` (activity dates keyed by Moodle's `dataid` such as `duedate`
+or `allowsubmissionsfromdate`, as local ISO date-times with minutes; they include per-user
+overrides), `completion` (`incomplete`, `complete`, `pass` or `fail` when the activity
+tracks completion) and, for modules locked by an access restriction, `available: false`
+plus `availability` (the condition as text, up to 300 chars). Empty values are omitted.
+`subsection` modules are listed flat inside their parent section. Modules hidden by the
+teacher are not returned by Moodle at all; restricted ones are kept. `page` modules list
+no files because their only file is a synthetic `index.html`.
 
 ### download_file(fileurl: str, course_id: int)
 Accepts only URLs under `<MOODLE_URL>/webservice/pluginfile.php/` with no empty,
