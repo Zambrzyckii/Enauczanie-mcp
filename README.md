@@ -42,7 +42,8 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
 On Windows the venv keeps its programs in `.venv\Scripts` instead of `.venv/bin`, so use
-`.venv\Scripts\pip` here and `.venv\Scripts\python.exe` when registering the server.
+`.venv\Scripts\pip` here. When registering the server, replace `"$(pwd)/.venv/bin/python"`
+with the full path to `.venv\Scripts\python.exe`.
 
 ## Token
 
@@ -93,10 +94,11 @@ context.
 | `enauczanie_mcp/moodle_client.py` | REST calls, concurrent calls and checked file downloads |
 | `enauczanie_mcp/config.py` | reads `MOODLE_URL`, `MOODLE_TOKEN` and `ENAUCZANIE_DOWNLOAD_DIR` from the environment, then `.env` |
 | `enauczanie_mcp/formatting.py` | HTML to text, the course tree and size limits |
-| `enauczanie_mcp/assignments.py`, `grades.py`, `forums.py`, `quizzes.py`, `h5p.py`, `updates.py` | shape Moodle's answers for each group of tools |
+| `enauczanie_mcp/assignments.py`, `grades.py`, `forums.py`, `quizzes.py`, `updates.py` | shape Moodle's answers for each group of tools |
+| `enauczanie_mcp/h5p.py` | reads the text out of a downloaded H5P package |
 | `get_token.py` | gets the token through the mobile-app login flow |
 
-There are no automated tests yet.
+There are no automated tests.
 
 ## Security
 

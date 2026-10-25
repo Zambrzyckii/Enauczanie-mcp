@@ -1,6 +1,6 @@
 # Contributing to enauczanie-mcp
 
-Thanks for taking the time to help. This page says how to run the project, how to propose a change and what a pull request needs.
+This page says how to run the project, how to propose a change and what a pull request needs.
 
 ## Run it locally
 
