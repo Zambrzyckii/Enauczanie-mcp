@@ -34,4 +34,5 @@ written to `.env` (`MOODLE_URL`, `MOODLE_TOKEN`) and the result to
 `token_result.txt`. For a new year set `MOODLE_URL` (e.g. `.../2026`) in the
 environment before running `get_token.py`.
 
-Downloads land in `downloads/<course-slug>/`; delete a file to re-download it.
+Downloads land in `downloads/<course-slug>/<contextid>/...`, mirroring Moodle's
+pluginfile path. Delete a file to re-download it.

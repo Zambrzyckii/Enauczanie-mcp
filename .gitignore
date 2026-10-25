@@ -6,3 +6,4 @@ __pycache__/
 token_result.txt
 .superpowers/
 *.egg-info/
+functions.json

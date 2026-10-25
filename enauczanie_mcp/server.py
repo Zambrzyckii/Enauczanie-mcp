@@ -69,13 +69,17 @@ def get_course_contents(course_id: int) -> list[dict]:
 def download_file(fileurl: str, course_id: int) -> dict:
     """Download a course file (fileurl from get_course_contents) into the local downloads directory and return its path."""
     try:
+        segments = _client().file_segments(fileurl)
         course = _client().call("core_course_get_courses_by_field", field="id", value=course_id)["courses"]
         shortname = course[0]["shortname"] if course else str(course_id)
-        filename = safe_filename(unquote(fileurl.rsplit("/", 1)[-1].split("?")[0]))
-        dest = _settings().download_dir / slugify(shortname) / filename
+        # pluginfile layout: contextid/component/filearea/itemid/<filepath...>/filename
+        relative = [safe_filename(unquote(segment)) for segment in [segments[0], *segments[4:]]]
+        dest = _settings().download_dir.joinpath(slugify(shortname), *relative)
         if dest.exists():
             return {"path": str(dest), "size": dest.stat().st_size, "skipped": True}
         size = _client().download(fileurl, dest, MAX_DOWNLOAD_BYTES)
     except MoodleApiError as exc:
         raise _tool_error(exc) from None
+    except OSError as exc:
+        raise ToolError(f"File system error: {exc}") from None
     return {"path": str(dest), "size": size, "skipped": False}

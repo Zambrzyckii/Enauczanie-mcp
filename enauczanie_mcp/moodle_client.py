@@ -1,12 +1,14 @@
+import http.client
 import json
-import shutil
-import urllib.error
+import os
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 REST_PATH = "/webservice/rest/server.php"
+PLUGINFILE_PATH = "/webservice/pluginfile.php/"
+CHUNK_SIZE = 64 * 1024
 
 
 class MoodleApiError(Exception):
@@ -14,6 +16,14 @@ class MoodleApiError(Exception):
         super().__init__(f"{errorcode}: {message}")
         self.errorcode = errorcode
         self.message = message
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise MoodleApiError("redirect", "Moodle answered with a redirect, which is not followed")
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
 
 
 class MoodleClient:
@@ -27,33 +37,53 @@ class MoodleClient:
             {"wstoken": self._token, "wsfunction": function, "moodlewsrestformat": "json", **params}
         ).encode()
         try:
-            with urllib.request.urlopen(self.base_url + REST_PATH, data=data, timeout=self.timeout) as resp:
+            with _opener.open(self.base_url + REST_PATH, data=data, timeout=self.timeout) as resp:
                 payload = json.load(resp)
-        except urllib.error.URLError as exc:
+        except (OSError, http.client.HTTPException, ValueError) as exc:
             raise MoodleApiError("network", self._redact(str(exc))) from None
         if isinstance(payload, dict) and "exception" in payload:
             raise MoodleApiError(payload.get("errorcode", "unknown"), payload.get("message", ""))
         return payload
 
+    def file_segments(self, fileurl: str) -> list[str]:
+        """Validate a pluginfile URL of this instance and return its path segments after pluginfile.php."""
+        url = urllib.parse.urlsplit(fileurl)
+        base = urllib.parse.urlsplit(self.base_url)
+        prefix = base.path + PLUGINFILE_PATH
+        if (url.scheme, url.netloc) != (base.scheme, base.netloc) or not url.path.startswith(prefix):
+            raise MoodleApiError("foreignurl", "file URL is not a pluginfile URL of the configured Moodle instance")
+        segments = url.path[len(prefix):].split("/")
+        if any(segment in ("", ".", "..") for segment in segments):
+            raise MoodleApiError("foreignurl", "file URL contains an invalid path segment")
+        return segments
+
     def download(self, fileurl: str, dest: Path, max_bytes: int) -> int:
-        if not fileurl.startswith(self.base_url + "/"):
-            raise MoodleApiError("foreignurl", "file URL does not belong to the configured Moodle instance")
+        self.file_segments(fileurl)
         separator = "&" if "?" in fileurl else "?"
         request = urllib.request.Request(fileurl + separator + urllib.parse.urlencode({"token": self._token}))
+        part = dest.with_name(dest.name + ".part")
+        written = 0
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+            with _opener.open(request, timeout=self.timeout) as resp:
                 if resp.headers.get_content_type() == "application/json":
                     payload = json.load(resp)
                     raise MoodleApiError(payload.get("errorcode", "unknown"), payload.get("message", ""))
-                length = resp.headers.get("Content-Length")
-                if length and int(length) > max_bytes:
+                length = resp.headers.get("Content-Length", "")
+                if length.isdigit() and int(length) > max_bytes:
                     raise MoodleApiError("toolarge", f"file is {length} bytes, limit is {max_bytes}")
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                with open(dest, "wb") as fh:
-                    shutil.copyfileobj(resp, fh)
-        except urllib.error.URLError as exc:
+                with open(part, "wb") as fh:
+                    while chunk := resp.read(CHUNK_SIZE):
+                        written += len(chunk)
+                        if written > max_bytes:
+                            raise MoodleApiError("toolarge", f"file exceeds the limit of {max_bytes} bytes")
+                        fh.write(chunk)
+            os.replace(part, dest)
+        except (OSError, http.client.HTTPException, ValueError) as exc:
             raise MoodleApiError("network", self._redact(str(exc))) from None
-        return dest.stat().st_size
+        finally:
+            part.unlink(missing_ok=True)
+        return written
 
     def _redact(self, text: str) -> str:
         return text.replace(self._token, "***")

@@ -79,10 +79,15 @@ Modules with `uservisible == false` are omitted. `label` modules keep only
 their text.
 
 ### download_file(fileurl: str, course_id: int)
-Validates that `fileurl` starts with `MOODLE_URL`, appends `token=` server-side,
-streams the file to `downloads/<shortname-slug>/<filename>` and returns
-`{path, size, skipped}`. If a file of the same name already exists the download
-is skipped (delete it to re-download). Files larger than 200 MB are refused. The token never
+Accepts only URLs under `<MOODLE_URL>/webservice/pluginfile.php/` with no empty,
+`.` or `..` segments (checked before any request), appends `token=` server-side
+and streams the file to `downloads/<shortname-slug>/<contextid>/<filepath...>/<filename>`,
+mirroring Moodle's pluginfile layout `contextid/component/filearea/itemid/filepath/filename`
+so files with equal names in one course do not collide. The file is written to a
+`.part` sibling and renamed on success. On any failure the partial file is removed.
+Redirects are not followed. Files larger than 200 MB are refused, both by
+`Content-Length` and by counting streamed bytes. If the destination already
+exists the download is skipped (delete it to re-download). The token never
 appears in any tool result.
 
 ## Error handling
@@ -90,9 +95,11 @@ appears in any tool result.
 Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ...}`
 on errors. `MoodleClient.call` raises `MoodleApiError(errorcode, message)`.
 Tools catch it and return a one-line message. For `invalidtoken` the message
-adds: "run get_token.py to obtain a new token". Network errors
-(`URLError`, timeouts; 30 s per request) are reported the same way.
-Missing settings fail fast at server start with a clear message.
+adds: "run get_token.py to obtain a new token". Network, HTTP-protocol, URL and JSON-decoding errors
+(`OSError`, `http.client.HTTPException`, `ValueError`; 30 s per request) are
+mapped to `MoodleApiError("network", ...)` with the token redacted from the text.
+Missing settings fail fast at server start: `__main__.py` loads them before
+`server.run` and exits with the message on stderr.
 
 ## Registration and verification
 
