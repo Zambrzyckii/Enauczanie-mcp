@@ -9,6 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from .assignments import assignment_deadline, summarize_assignment, summarize_status
 from .config import Settings, load_settings
 from .formatting import build_course_tree, format_timestamp, safe_filename, slugify, strip_multilang
+from .grades import summarize_course_grade, summarize_grade_item
 from .h5p import flatten_content, read_package
 from .moodle_client import MoodleApiError, MoodleClient
 from .quizzes import quiz_deadline
@@ -172,6 +173,20 @@ def list_deadlines(days_ahead: int = 14, days_back: int = 1) -> dict:
     deadlines = [assignment_deadline(a, c) for c in assignments["courses"] for a in c["assignments"]]
     deadlines += [quiz_deadline(q, course_names) for q in quizzes]
     return {"deadlines": [d for ts, d in sorted(deadlines, key=lambda x: x[0]) if ts and start <= ts <= end]}
+
+
+@server.tool()
+@_moodle_tool
+def get_grades(course_id: int | None = None) -> dict:
+    """Return the user's grades: without course_id the final grade of every course, with a course_id (from
+    list_courses) every grade item of that course with weight, range, feedback and grading time."""
+    if course_id is None:
+        overview = _client().call("gradereport_overview_get_course_grades", userid=_userid())["grades"]
+        courses = _client().call("core_enrol_get_users_courses", userid=_userid())
+        names = {c["id"]: c["shortname"] for c in courses}
+        return {"courses": [summarize_course_grade(g, names) for g in overview]}
+    report = _client().call("gradereport_user_get_grade_items", courseid=course_id, userid=_userid())
+    return {"items": [summarize_grade_item(i) for g in report["usergrades"] for i in g["gradeitems"]]}
 
 
 def _download(fileurl: str, course_id: int) -> dict:

@@ -143,6 +143,17 @@ for assignment `duedate` and quiz `timeclose` values inside the window, soonest 
 Items without a date are skipped. Both window sizes are clamped to 0..365 days.
 Course names for quizzes come from the `courses` list of the assignments payload.
 
+### get_grades(course_id: int | None = None)
+Added 2026-10-25. Without `course_id`: `gradereport_overview_get_course_grades` joined
+with `core_enrol_get_users_courses` for shortnames, returned as `{courses: [{course_id,
+course, grade}]}` where `grade` is Moodle's formatted string (`88,19` or `-`). With
+`course_id`: `gradereport_user_get_grade_items` with the user's own `userid` (the
+default `userid=0` means "all users" there and fails with `nopermissions`), returned as
+`{items: [{name, type (module name, or course/category for totals), module_id, grade,
+range, percentage, weight, feedback, graded, hidden}]}` with empty values omitted. Course
+and category totals have no `itemname` in Moodle and are named `Course total` and
+`Category total`.
+
 ## Error handling
 
 Moodle answers HTTP 200 with `{"exception": ..., "errorcode": ..., "message": ...}`
