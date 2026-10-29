@@ -308,10 +308,22 @@ def list_vote_options(course_id: int, module_id: int) -> dict:
 
 @server.tool()
 @_moodle_tool
-def submit_vote(course_id: int, module_id: int, option_ids: list[int]) -> dict:
+def submit_vote(course_id: int, module_id: int, option_ids: list[int], confirm: bool = False) -> dict:
     """WRITE: answer a poll (module of type choice, id from get_course_contents) with the option ids the user chose
-    (from list_vote_options). Moodle validates them."""
+    (from list_vote_options). Without confirm=true nothing is sent and the error shows the answer and any earlier one
+    it replaces; repeat with confirm=true only after the user's explicit yes."""
     instance = _resolve_instance(course_id, module_id, "choice")
+    options = _vote_options(instance)
+    texts = {o["option_id"]: o["text"] for o in options}
+    unknown = [str(option_id) for option_id in option_ids if option_id not in texts]
+    if unknown or not option_ids:
+        raise ToolError(f"Give option ids from list_vote_options; not in this poll: {', '.join(unknown) or 'none given'}")
+    if not confirm:
+        lines = [f"Answer: {', '.join(texts[option_id] for option_id in option_ids)}"]
+        earlier = [o["text"] for o in options if o.get("chosen")]
+        if earlier:
+            lines.append(f"Replaces the earlier answer: {', '.join(earlier)}")
+        raise _confirm_first("sent", lines)
     params = {f"responses[{i}]": option_id for i, option_id in enumerate(option_ids)}
     _client().call("mod_choice_submit_choice_response", choiceid=instance, **params)
     return {"options": _vote_options(instance)}
