@@ -83,6 +83,18 @@ def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str |
     return lines
 
 
+def _submit_group_answer(instance: int, option_id: int | None, keep: list[dict]) -> None:
+    # A single-choice sign-up reads only the "responses" entry. One that allows several groups reads the
+    # response_<id> entries and drops the user from every group missing there, so the kept groups always go along.
+    data = [("responses", str(option_id))] if option_id is not None else []
+    data += [(f"response_{o['option_id']}", "true") for o in keep]
+    params = {}
+    for index, (name, value) in enumerate(data):
+        params[f"data[{index}][name]"] = name
+        params[f"data[{index}][value]"] = value
+    _client().call("mod_choicegroup_submit_choicegroup_response", choicegroupid=instance, **params)
+
+
 def _group_options(instance: int) -> list[dict]:
     options = _client().call("mod_choicegroup_get_choicegroup_options", choicegroupid=instance, userid=_userid())["options"]
     return [
@@ -206,22 +218,36 @@ def list_group_choices(course_id: int, module_id: int) -> dict:
 
 @server.tool()
 @_moodle_tool
-def join_group(course_id: int, module_id: int, option_id: int) -> dict:
-    """WRITE: sign the user up for one option of a group sign-up (option_id from list_group_choices). A full or
-    locked option is refused by Moodle."""
+def join_group(course_id: int, module_id: int, option_id: int, confirm: bool = False) -> dict:
+    """WRITE: sign the user up for one option of a group sign-up (option_id from list_group_choices). The choice may
+    be final and may move the user out of a current group, so without confirm=true nothing changes and the error
+    describes the change; repeat with confirm=true only after the user's explicit yes."""
     instance = _resolve_instance(course_id, module_id, "choicegroup")
-    # Both data forms at once: single-choice mode reads the "responses" entry, multiple mode the response_<id> one.
-    _client().call(
-        "mod_choicegroup_submit_choicegroup_response",
-        choicegroupid=instance,
-        **{
-            "data[0][name]": "responses",
-            "data[0][value]": str(option_id),
-            "data[1][name]": f"response_{option_id}",
-            "data[1][value]": "true",
-        },
-    )
-    return {"options": _group_options(instance)}
+    options = _group_options(instance)
+    target = find(options, "option_id", option_id)
+    if not target:
+        raise ToolError(f"No option {option_id} in this group sign-up")
+    if target.get("chosen"):
+        raise ToolError(f"The user is already in {target['group']}")
+    if target.get("locked"):
+        raise ToolError(f"{target['group']} is full or closed")
+    current = [o for o in options if o.get("chosen")]
+    if not confirm:
+        lines = [f"Joins: {target['group']}"]
+        if current:
+            lines.append(
+                f"Now in: {', '.join(o['group'] for o in current)}. Where the sign-up allows one group, joining moves "
+                "the user out of it and frees that place; where it allows several, the user stays there too"
+            )
+        lines.append("If the sign-up does not allow changes, the choice is final")
+        raise _confirm_first("changed", lines)
+    _submit_group_answer(instance, option_id, [target, *current])
+    options = _group_options(instance)
+    chosen = {o["option_id"] for o in options if o.get("chosen")}
+    now_in = ", ".join(o["group"] for o in options if o.get("chosen")) or "no group"
+    if option_id not in chosen:
+        raise ToolError(f"Moodle did not sign the user up for {target['group']}; the user is now in: {now_in}")
+    return compact({"options": options, "left": [o["group"] for o in current if o["option_id"] not in chosen]})
 
 
 @server.tool()
