@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .assignments import summarize_status
 from .formatting import compact, find, strip_multilang, text_to_html
-from .server import ToolError, _client, _moodle_tool, server
+from .server import ToolError, _client, _moodle_tool, _userid, server
 
 ONLINE_TEXT_HTML = 1
 
@@ -57,11 +57,13 @@ def _check_submission(assignment: dict, payload: dict, paths: list[Path], text: 
         raise ToolError("Saving only files would erase the online text already in the submission; pass it as text too")
 
 
-def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str | None) -> str:
-    lines = [
-        "Nothing saved yet. Show the user this and call again with confirm=true only after their explicit yes.",
-        f"Assignment: {strip_multilang(assignment['name'])}",
-    ]
+def _confirm_first(done: str, lines: list[str]) -> ToolError:
+    intro = f"Nothing {done} yet. Show the user this and call again with confirm=true only after their explicit yes."
+    return ToolError("\n".join([intro, *lines]))
+
+
+def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str | None) -> list[str]:
+    lines = [f"Assignment: {strip_multilang(assignment['name'])}"]
     if paths:
         lines.append(f"Files: {', '.join(p.name for p in paths)}")
         current = [f["filename"] for f in status.get("my_files", [])]
@@ -76,7 +78,7 @@ def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str |
         lines.append("This assignment has no draft stage: saving hands it in for grading and the teacher sees it at once")
     if assignment.get("teamsubmission"):
         lines.append("Team assignment: this changes the shared submission of the whole group")
-    return "\n".join(lines)
+    return lines
 
 
 def _group_options(instance: int) -> list[dict]:
@@ -119,7 +121,7 @@ def save_assignment_submission(
     payload = _client().call("mod_assign_get_submission_status", assignid=assignment_id)
     _check_submission(assignment, payload, paths, text)
     if not confirm:
-        raise ToolError(_save_preview(assignment, summarize_status(payload), paths, text))
+        raise _confirm_first("saved", _save_preview(assignment, summarize_status(payload), paths, text))
     params: dict = {}
     if paths:
         params["plugindata[files_filemanager]"] = _client().upload_draft(paths)
@@ -148,6 +150,33 @@ def submit_assignment(assignment_id: int, confirm: bool = False) -> dict:
         )
     _client().call("mod_assign_submit_for_grading", assignmentid=assignment_id, acceptsubmissionstatement=1)
     return {"submitted": True, "status": _assignment_status(assignment_id)}
+
+
+@server.tool()
+@_moodle_tool
+def remove_submission(course_id: int, assignment_id: int, confirm: bool = False) -> dict:
+    """WRITE: the "Remove submission" button. Deletes the files and online text of the user's submission of an
+    assignment (ids from list_assignments), which then counts as not submitted. Cannot be undone; without confirm=true
+    nothing is removed and the error lists what would be deleted."""
+    assignment = _assignment(course_id, assignment_id)
+    status = _assignment_status(assignment_id)
+    if status["status"] in ("new", "reopened"):
+        raise ToolError("There is no submission to remove")
+    if not confirm:
+        lines = [
+            f"Assignment: {strip_multilang(assignment['name'])}",
+            f"Deletes the files: {', '.join(f['filename'] for f in status.get('my_files', [])) or 'none'}",
+        ]
+        if status.get("my_text"):
+            lines.append("Deletes the online text")
+        if status.get("group_submission"):
+            lines.append("Team assignment: this empties the shared submission of the whole group")
+        raise _confirm_first("removed", lines)
+    result = _client().call("mod_assign_remove_submission", userid=_userid(), assignid=assignment_id)
+    if not result.get("status"):
+        warning = (result.get("warnings") or [{}])[0]
+        raise ToolError(f"Moodle did not remove the submission: {warning.get('message') or warning.get('warningcode')}")
+    return {"removed": True, "status": _assignment_status(assignment_id)}
 
 
 @server.tool()
