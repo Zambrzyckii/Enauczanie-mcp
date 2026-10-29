@@ -10,6 +10,7 @@ class Settings:
     moodle_url: str
     moodle_token: str
     download_dir: Path
+    allow_write: bool
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -34,4 +35,5 @@ def load_settings(env_file: Path = PROJECT_DIR / ".env") -> Settings:
         moodle_url=values["MOODLE_URL"].rstrip("/"),
         moodle_token=values["MOODLE_TOKEN"],
         download_dir=Path(values.get("ENAUCZANIE_DOWNLOAD_DIR", PROJECT_DIR / "downloads")),
+        allow_write=values.get("ENAUCZANIE_ALLOW_WRITE", "").lower() in ("1", "true"),
     )
