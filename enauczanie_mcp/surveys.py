@@ -17,8 +17,16 @@ def parse_choices(presentation: str) -> tuple[str, list[str]]:
 
 
 def numeric_range(presentation: str) -> tuple[float | None, float | None]:
+    """Moodle stores a missing bound as "-" or leaves it empty."""
     low, _, high = presentation.partition(LINE_SEP)
-    return (float(low) if low else None), (float(high) if high else None)
+    return _bound(low), _bound(high)
+
+
+def _bound(text: str) -> float | None:
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def range_text(low: float | None, high: float | None) -> str:

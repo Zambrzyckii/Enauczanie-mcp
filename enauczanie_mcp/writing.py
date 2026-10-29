@@ -4,6 +4,7 @@ Every tool here changes the user's real Moodle account. Content comes verbatim f
 user; irreversible steps require an explicit confirm argument. Quiz attempts and H5P
 attempt results are deliberately not implemented.
 """
+import math
 from pathlib import Path
 
 from .assignments import summarize_status
@@ -333,10 +334,12 @@ def _numeric_answer(item: dict, answer) -> str:
     try:
         value = float(answer)
     except (TypeError, ValueError):
-        raise ToolError(f"Item {item['id']}: answer with a number") from None
+        value = math.nan
+    if not math.isfinite(value):
+        raise ToolError(f"Item {item['id']}: answer with a number")
     if (low is not None and value < low) or (high is not None and value > high):
         raise ToolError(f"Item {item['id']}: the number must be from {range_text(low, high)}")
-    return f"{value:g}"
+    return str(int(value)) if value.is_integer() else repr(value)
 
 
 def _survey_responses(item: dict, answer) -> list[tuple[str, object]]:
