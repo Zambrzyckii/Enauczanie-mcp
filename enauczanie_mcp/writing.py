@@ -82,7 +82,7 @@ def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str |
 
 
 def _group_options(instance: int) -> list[dict]:
-    options = _client().call("mod_choicegroup_get_choicegroup_options", choicegroupid=instance, userid=0)["options"]
+    options = _client().call("mod_choicegroup_get_choicegroup_options", choicegroupid=instance, userid=_userid())["options"]
     return [
         compact(
             {
