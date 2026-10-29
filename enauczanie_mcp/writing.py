@@ -142,15 +142,30 @@ def save_assignment_submission(
 
 @server.tool()
 @_moodle_tool
-def submit_assignment(assignment_id: int, confirm: bool = False) -> dict:
-    """WRITE: submit the saved draft of an assignment for grading. Irreversible for the student. Requires the user's
-    explicit go-ahead, then confirm=true."""
+def submit_assignment(course_id: int, assignment_id: int, confirm: bool = False) -> dict:
+    """WRITE: the "Submit assignment" button: hand the saved draft of an assignment in for grading (ids from
+    list_assignments). The student cannot undo it. Without confirm=true nothing is handed in and the error describes
+    the draft; show it to the user and repeat with confirm=true only after their explicit yes."""
+    assignment = _assignment(course_id, assignment_id)
+    status = _assignment_status(assignment_id)
+    if status["status"] != "draft":
+        raise ToolError(f"Only a draft can be handed in; this submission is {status['status']}")
     if not confirm:
-        raise ToolError(
-            "Submitting for grading cannot be undone by the student. Ask the user to confirm this exact assignment, "
-            "then call again with confirm=true."
-        )
-    _client().call("mod_assign_submit_for_grading", assignmentid=assignment_id, acceptsubmissionstatement=1)
+        lines = [
+            f"Assignment: {strip_multilang(assignment['name'])}",
+            f"Files: {', '.join(f['filename'] for f in status.get('my_files', [])) or 'none'}",
+        ]
+        if status.get("my_text"):
+            lines.append("Online text included")
+        if assignment.get("teamsubmission"):
+            lines.append("Team assignment: this hands in the submission of the whole group")
+        if assignment.get("requiresubmissionstatement"):
+            lines.append(f"It also accepts this statement: {full_text(assignment.get('submissionstatement', ''))}")
+        lines.append("The student cannot undo this")
+        raise _confirm_first("handed in", lines)
+    warnings = _client().call("mod_assign_submit_for_grading", assignmentid=assignment_id, acceptsubmissionstatement=1)
+    if warnings:
+        raise ToolError(f"Moodle did not hand the work in: {warnings[0].get('message') or warnings[0].get('warningcode')}")
     return {"submitted": True, "status": _assignment_status(assignment_id)}
 
 
