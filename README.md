@@ -122,9 +122,9 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
   applies to the shared submission of the whole group.
 - Online text is plain text. A blank line starts a new paragraph, other formatting such as
   bold or lists is not kept.
-- Quiz and H5P attempts are not available, because they are graded tests. Attendance and
-  consent forms are not available either, because the mobile-app token has no functions for
-  them.
+- Quiz and H5P attempts are not available, because they are graded tests. Consent forms are
+  not available, because the Moodle mobile app does not support them. Attendance marking is
+  not implemented.
 - When the server runs in Docker, `file_paths` are paths inside the container, so mount the
   folder that holds the files.
 
