@@ -1,6 +1,7 @@
 import http.client
 import json
 import os
+import secrets
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 REST_PATH = "/webservice/rest/server.php"
+UPLOAD_PATH = "/webservice/upload.php"
 PLUGINFILE_PATH = "/webservice/pluginfile.php/"
 CHUNK_SIZE = 64 * 1024
 
@@ -58,6 +60,36 @@ class MoodleClient:
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             return list(pool.map(run, calls))
+
+    def upload_draft(self, paths: list[Path]) -> int:
+        """Upload local files into a new private draft area and return its item id (for *_filemanager params)."""
+        boundary = secrets.token_hex(16)
+        fields = {"token": self._token, "filearea": "draft", "itemid": "0"}
+        parts = [
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+            for name, value in fields.items()
+        ]
+        for index, path in enumerate(paths):
+            filename = path.name.replace('"', "")
+            parts.append(
+                f'--{boundary}\r\nContent-Disposition: form-data; name="file_{index}"; filename="{filename}"\r\n'
+                f"Content-Type: application/octet-stream\r\n\r\n".encode() + path.read_bytes() + b"\r\n"
+            )
+        parts.append(f"--{boundary}--\r\n".encode())
+        request = urllib.request.Request(
+            self.base_url + UPLOAD_PATH,
+            data=b"".join(parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        try:
+            with _opener.open(request, timeout=self.timeout) as resp:
+                payload = json.load(resp)
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            raise MoodleApiError("network", self._redact(str(exc))) from None
+        if isinstance(payload, dict):
+            message = payload.get("error") or payload.get("message", "")
+            raise MoodleApiError(payload.get("errorcode", "upload"), self._redact(str(message)))
+        return payload[0]["itemid"]
 
     def file_segments(self, fileurl: str) -> list[str]:
         """Validate a pluginfile URL of this instance and return its path segments after pluginfile.php."""
