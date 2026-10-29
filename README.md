@@ -28,7 +28,8 @@ Tools:
 - What is new: `get_recent_changes`, `get_notifications`.
 - Write mode only: `save_assignment_submission`, `submit_assignment`, `remove_submission`,
   `list_group_choices`, `join_group`, `leave_group`, `list_vote_options`, `submit_vote`,
-  `get_survey`, `submit_survey`, `set_activity_done`, `mark_notification_read`.
+  `get_survey`, `submit_survey`, `mark_attendance`, `set_activity_done`,
+  `mark_notification_read`.
 
 ## Requirements
 
@@ -106,16 +107,22 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
 | Group sign-up (`choicegroup`) | `list_group_choices`, `join_group`, `leave_group` |
 | Poll (`choice`) | `list_vote_options`, `submit_vote` |
 | Survey (`feedback`) | `get_survey`, `submit_survey` |
+| Submit attendance (`attendance`) | `mark_attendance` |
 | Mark as done | `set_activity_done` |
 | Notification read | `mark_notification_read` |
 
 - `save_assignment_submission`, `submit_assignment`, `remove_submission`, `join_group`,
-  `leave_group`, `submit_vote` and `submit_survey` change nothing without `confirm=true`. The
-  first call only describes what would happen, so Claude can show it to you before anything
-  reaches Moodle.
+  `leave_group`, `submit_vote`, `submit_survey` and `mark_attendance` change nothing without
+  `confirm=true`. The first call only describes what would happen, so Claude can show it to you
+  before anything reaches Moodle.
 - `set_activity_done` and `mark_notification_read` act at once.
 - `join_group` keeps the groups you are already in where the sign-up allows several. Where it
   allows one, joining moves you out of your current group.
+- `mark_attendance` records your attendance at the session that is open for self-marking now,
+  so use it only when you are at that class. It does not contact Moodle before `confirm=true`,
+  because where the teacher set an automatic status without a password, opening the list of
+  sessions already records it. Moodle still checks the password the teacher gives in class and
+  may take marks only from the campus network. Where it offers several statuses, you choose one.
 - Many assignments have no draft stage. There, saving already hands the work in and the
   teacher sees it. The description before saving says which case applies.
 - New files replace every file already in the submission. On a team assignment the change
@@ -123,8 +130,7 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
 - Online text is plain text. A blank line starts a new paragraph, other formatting such as
   bold or lists is not kept.
 - Quiz and H5P attempts are not available, because they are graded tests. Consent forms are
-  not available, because the Moodle mobile app does not support them. Attendance marking is
-  not implemented.
+  not available, because the Moodle mobile app does not support them.
 - When the server runs in Docker, `file_paths` are paths inside the container, so mount the
   folder that holds the files.
 
@@ -152,6 +158,8 @@ one or more calls to Moodle's REST web service (`/webservice/rest/server.php`), 
 plain text and cuts long texts and lists, so a course tree or a forum thread fits the model's
 context. Write tools first upload files through `/webservice/upload.php` into the user's
 private draft area, then call the same functions the Moodle mobile app uses for each button.
+Attendance is a plugin whose pages the app gets as ready HTML through `tool_mobile_get_content`,
+so `mark_attendance` reads the sessions and statuses from that HTML.
 
 | Path | Role |
 |---|---|
@@ -160,7 +168,7 @@ private draft area, then call the same functions the Moodle mobile app uses for 
 | `enauczanie_mcp/moodle_client.py` | REST calls, concurrent calls, draft uploads and checked file downloads |
 | `enauczanie_mcp/config.py` | reads `MOODLE_URL`, `MOODLE_TOKEN`, `ENAUCZANIE_DOWNLOAD_DIR` and `ENAUCZANIE_ALLOW_WRITE` from the environment, then `.env` |
 | `enauczanie_mcp/formatting.py` | HTML to text, plain text to HTML, the course tree and size limits |
-| `enauczanie_mcp/assignments.py`, `grades.py`, `forums.py`, `quizzes.py`, `surveys.py`, `updates.py` | shape Moodle's answers for each group of tools |
+| `enauczanie_mcp/assignments.py`, `attendance.py`, `grades.py`, `forums.py`, `quizzes.py`, `surveys.py`, `updates.py` | shape Moodle's answers for each group of tools |
 | `enauczanie_mcp/h5p.py` | reads the text out of a downloaded H5P package |
 | `get_token.py` | gets the token through the mobile-app login flow |
 
