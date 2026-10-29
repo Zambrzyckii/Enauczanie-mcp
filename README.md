@@ -89,7 +89,8 @@ quiz.
 ## Write mode
 
 Write mode lets Claude act on the account the way the student does with Moodle's buttons.
-It is off unless `ENAUCZANIE_ALLOW_WRITE=1` is set in `.env` or in the server's environment.
+It is off unless `ENAUCZANIE_ALLOW_WRITE=1` (or `true`) is set in `.env` or in the server's
+environment.
 `get_token.py` keeps that line when it stores a new token. Start a new Claude Code session
 after turning it on or off.
 
@@ -108,10 +109,13 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
 | Mark as done | `set_activity_done` |
 | Notification read | `mark_notification_read` |
 
-- `save_assignment_submission`, `submit_assignment`, `remove_submission`, `leave_group` and
-  `submit_survey` change nothing without `confirm=true`. The first call only describes what
-  would happen, so Claude can show it to you before anything reaches Moodle.
-- `join_group`, `submit_vote`, `set_activity_done` and `mark_notification_read` act at once.
+- `save_assignment_submission`, `submit_assignment`, `remove_submission`, `join_group`,
+  `leave_group`, `submit_vote` and `submit_survey` change nothing without `confirm=true`. The
+  first call only describes what would happen, so Claude can show it to you before anything
+  reaches Moodle.
+- `set_activity_done` and `mark_notification_read` act at once.
+- `join_group` keeps the groups you are already in where the sign-up allows several. Where it
+  allows one, joining moves you out of your current group.
 - Many assignments have no draft stage. There, saving already hands the work in and the
   teacher sees it. The description before saving says which case applies.
 - New files replace every file already in the submission. On a team assignment the change
