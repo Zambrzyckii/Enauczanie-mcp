@@ -1,20 +1,26 @@
 """Write tools, registered only when ENAUCZANIE_ALLOW_WRITE=1 is set.
 
 Every tool here changes the user's real Moodle account. Content comes verbatim from the
-user; irreversible steps require an explicit confirm argument. Quiz attempts and H5P
-attempt results are deliberately not implemented.
+user; irreversible steps require an explicit confirm argument. Quiz attempts are made only
+for quizzes without marks, such as surveys; graded quizzes and H5P attempt results are
+deliberately not supported.
 """
 import math
 from pathlib import Path
 
 from .assignments import summarize_status
-from .attendance import APP_VERSION_CODE, MESSAGES, asks_password, can_submit, parse_messages, parse_sessions, parse_statuses
-from .formatting import compact, cut, find, full_text, html_to_text, strip_multilang, text_to_html
+from .attendance import (
+    APP_VERSION_CODE, MESSAGES, asks_password, can_submit, parse_messages, parse_sessions, parse_statuses
+)
+from .formatting import compact, cut, find, format_datetime, full_text, html_to_text, strip_multilang, text_to_html
 from .moodle_client import MoodleApiError
+from .quizzes import parse_question_form, summarize_attempt, summarize_form_question
 from .server import ToolError, _client, _moodle_tool, _userid, server
 from .surveys import CHOICE_TYPES, numeric_range, parse_choices, range_text, summarize_item
 
 ONLINE_TEXT_HTML = 1
+# grade_calculator::ALMOST_ZERO, the bound quiz_has_grades() uses for the maximum grade and the sum of question marks.
+ALMOST_ZERO = 0.000005
 
 
 def _module(course_id: int, module_id: int, modname: str) -> dict:
@@ -394,12 +400,12 @@ def get_survey(course_id: int, module_id: int) -> dict:
     return compact(result)
 
 
-def _chosen_options(item: dict, answer, subtype: str, count: int) -> list[int]:
+def _chosen_options(where: str, answer, several: bool, count: int) -> list[int]:
     chosen = [] if answer is None else answer if isinstance(answer, list) else [answer]
     chosen = [int(n) if isinstance(n, str) and n.isdigit() else n for n in chosen]
-    if not all(isinstance(n, int) and 1 <= n <= count for n in chosen) or (subtype != "c" and len(chosen) > 1):
-        wanted = "a list of option numbers" if subtype == "c" else "one option number"
-        raise ToolError(f"Item {item['id']}: answer with {wanted} from 1 to {count}")
+    if not all(isinstance(n, int) and 1 <= n <= count for n in chosen) or (not several and len(chosen) > 1):
+        wanted = "a list of option numbers" if several else "one option number"
+        raise ToolError(f"{where}: answer with {wanted} from 1 to {count}")
     return chosen
 
 
@@ -423,7 +429,7 @@ def _survey_responses(item: dict, answer) -> list[tuple[str, object]]:
         return [(name, "__CURRENT__TIMESTAMP__" if item.get("presentation") == "1" else item.get("otherdata", ""))]
     if kind in CHOICE_TYPES:
         subtype, labels = parse_choices(item.get("presentation", ""))
-        chosen = _chosen_options(item, answer, subtype, len(labels))
+        chosen = _chosen_options(f"Item {item['id']}", answer, subtype == "c", len(labels))
         if subtype == "c":
             return [(f"{name}[0]", 0)] + [(f"{name}[{n}]", n if n in chosen else 0) for n in range(1, len(labels) + 1)]
         key = f"{name}[0]" if kind == "multichoice" and subtype == "d" else name
@@ -585,3 +591,158 @@ def mark_attendance(
     if not after.get("status"):
         raise ToolError(f"Moodle did not record the attendance: {'; '.join(parse_messages(page)) or 'it gave no reason'}")
     return {"recorded": [_recorded(after)]}
+
+
+def _survey_quiz(course_id: int, module_id: int) -> dict:
+    quizzes = _client().call("mod_quiz_get_quizzes_by_courses", **{"courseids[0]": course_id})["quizzes"]
+    quiz = find(quizzes, "coursemodule", module_id)
+    if not quiz:
+        raise ToolError(f"No quiz with module id {module_id} in course {course_id}")
+    # Moodle's quiz_has_grades(): marks count only when both values reach ALMOST_ZERO. A missing value counts as marks.
+    marks = (quiz.get("grade"), quiz.get("sumgrades"))
+    if None in marks or min(float(m) for m in marks) >= ALMOST_ZERO:
+        raise ToolError("This quiz gives marks, so it is a test; the write tools only fill in quizzes without marks")
+    if quiz.get("navmethod") == "sequential":
+        raise ToolError("This quiz must be answered page by page in a fixed order; the user fills it in in the browser")
+    return quiz
+
+
+def _unfinished_attempt(quiz: dict) -> dict | None:
+    attempts = _client().call("mod_quiz_get_user_attempts", quizid=quiz["id"], status="unfinished")["attempts"]
+    return attempts[-1] if attempts else None
+
+
+def _attempt_questions(attempt_id: int) -> dict[int, tuple[dict, dict]]:
+    """Every question of the attempt by slot, with its parsed form."""
+    questions, page = {}, 0
+    while page >= 0:
+        payload = _client().call("mod_quiz_get_attempt_data", attemptid=attempt_id, page=page)
+        questions.update({q["slot"]: (q, parse_question_form(q.get("html", ""))) for q in payload["questions"]})
+        page = payload["nextpage"]
+    return questions
+
+
+@server.tool()
+@_moodle_tool
+def get_quiz_survey(course_id: int, module_id: int, confirm: bool = False) -> dict:
+    """WRITE: open a survey made as a quiz without marks (module of type quiz, id from get_course_contents) and list
+    its questions with option numbers. It continues an attempt already in progress; starting a new one shows as an
+    attempt in progress, so without confirm=true nothing starts and the error describes the survey. Quizzes that give
+    marks are refused. submit_quiz_survey sends the answers."""
+    quiz = _survey_quiz(course_id, module_id)
+    attempt = _unfinished_attempt(quiz)
+    if not attempt:
+        access = _client().call("mod_quiz_get_quiz_access_information", quizid=quiz["id"])
+        reasons = "; ".join(html_to_text(reason, None) for reason in access.get("preventaccessreasons", []))
+        if not access.get("canattempt") or reasons:
+            raise ToolError(f"Moodle does not let the user start this quiz now: {reasons or 'no reason given'}")
+        if not confirm:
+            lines = [f"Survey: {strip_multilang(quiz['name'])}", "Starts an attempt, in progress until it is sent"]
+            if quiz.get("timelimit"):
+                lines.append(f"Time limit: {quiz['timelimit'] // 60} min from the start")
+            if quiz.get("timeclose"):
+                lines.append(f"Closes: {format_datetime(quiz['timeclose'])}")
+            raise _confirm_first("started", lines)
+        started = _client().call("mod_quiz_start_attempt", quizid=quiz["id"])
+        if started.get("warnings") or not started.get("attempt"):
+            warning = (started.get("warnings") or [{}])[0]
+            raise ToolError(f"Moodle did not start the attempt: {warning.get('message') or 'no reason given'}")
+        attempt = started["attempt"]
+    questions = _attempt_questions(attempt["id"])
+    return compact(
+        {
+            "name": strip_multilang(quiz["name"]),
+            "intro": full_text(quiz.get("intro", "")),
+            "questions": [summarize_form_question(question, form) for question, form in questions.values()],
+        }
+    )
+
+
+def _quiz_answer_data(slot: int, form: dict, answer) -> dict:
+    """What the attempt page sends for one answered question: its hidden fields, sequence check included, and the
+    answer itself."""
+    if form["kind"] in ("none", "unsupported"):
+        raise ToolError(f"Question {slot} takes no answer here; the user answers it in the browser if it has one")
+    data = dict(form["hidden"])
+    if form["kind"] == "text":
+        if isinstance(answer, list):
+            raise ToolError(f"Question {slot}: answer with a text")
+        # Format 1 means the answer box is an HTML editor, as for online text.
+        html = form["hidden"].get(form["name"] + "format") == str(ONLINE_TEXT_HTML)
+        data[form["name"]] = text_to_html(str(answer)) if html else str(answer)
+        return data
+    several = form["kind"] == "several"
+    chosen = _chosen_options(f"Question {slot}", answer, several, len(form["options"]))
+    if several:
+        data.update({option["name"]: "1" if n in chosen else "0" for n, option in enumerate(form["options"], 1)})
+    else:
+        data[form["name"]] = form["options"][chosen[0] - 1]["value"]
+    return data
+
+
+def _process_attempt(attempt_id: int, data: dict, finish: bool) -> str:
+    params = {}
+    for index, (name, value) in enumerate(data.items()):
+        params[f"data[{index}][name]"] = name
+        params[f"data[{index}][value]"] = value
+    payload = _client().call("mod_quiz_process_attempt", attemptid=attempt_id, finishattempt=int(finish), **params)
+    return payload["state"]
+
+
+def _quiz_survey_preview(quiz: dict, questions: dict[int, tuple[dict, dict]], answers: dict) -> list[str]:
+    lines = [
+        f"Survey: {strip_multilang(quiz['name'])}",
+        "Not anonymous: a quiz keeps the user's name with the answers, and the teacher can see them",
+    ]
+    for slot, answer in answers.items():
+        question, form = questions[slot]
+        chosen = answer if isinstance(answer, list) else [answer]
+        shown = str(answer) if form["kind"] == "text" else ", ".join(form["options"][int(n) - 1]["label"] for n in chosen)
+        lines.append(f"{question.get('number') or slot}. {cut(form['text'], 80)[0]}: {shown}")
+    left = [slot for slot, (_, form) in questions.items() if slot not in answers and form["kind"] != "none"]
+    if left:
+        numbers = ", ".join(str(questions[slot][0].get("number") or slot) for slot in left)
+        lines.append(f"No answer is sent for questions {numbers}; anything saved there earlier stays")
+    lines.append("Sending finishes the attempt, after which its answers cannot be changed")
+    return lines
+
+
+@server.tool()
+@_moodle_tool
+def submit_quiz_survey(
+    course_id: int, module_id: int, answers: dict[int, int | str | list[int]], confirm: bool = False
+) -> dict:
+    """WRITE: answer and send a survey made as a quiz without marks, like its "Submit all and finish" button. answers
+    maps question from get_quiz_survey to one option number, a list of option numbers or a text, all given by the
+    user. Without confirm=true nothing is saved or sent and the error lists the answers for the user to approve.
+    Quizzes that give marks are refused."""
+    quiz = _survey_quiz(course_id, module_id)
+    attempt = _unfinished_attempt(quiz)
+    if not attempt:
+        raise ToolError("No attempt of this survey is in progress; get_quiz_survey starts one")
+    questions = _attempt_questions(attempt["id"])
+    answers = {slot: answer for slot, answer in answers.items() if answer not in (None, "", [])}
+    unknown = [str(slot) for slot in answers if slot not in questions]
+    if unknown or not answers:
+        raise ToolError(
+            f"Give answers by question from get_quiz_survey; not in this survey: {', '.join(unknown) or 'none given'}"
+        )
+    data = {}
+    for slot, answer in answers.items():
+        data.update(_quiz_answer_data(slot, questions[slot][1], answer))
+    if not confirm:
+        raise _confirm_first("saved or sent", _quiz_survey_preview(quiz, questions, answers))
+    _process_attempt(attempt["id"], data, finish=False)
+    saved = _attempt_questions(attempt["id"])
+    rejected = [str(slot) for slot in answers if saved[slot][0].get("stateclass") != "answersaved"]
+    if rejected:
+        raise ToolError(
+            f"Moodle did not accept the answers to questions {', '.join(rejected)}; the answers it took stay saved in "
+            "the open attempt and the survey is not sent"
+        )
+    state = _process_attempt(attempt["id"], {}, finish=True)
+    finished = _client().call("mod_quiz_get_user_attempts", quizid=quiz["id"], status="finished")["attempts"]
+    done = find(finished, "id", attempt["id"])
+    if not done:
+        raise ToolError(f"Moodle did not finish the attempt; its state is {state}")
+    return {"submitted": True, "attempt": summarize_attempt(done)}
