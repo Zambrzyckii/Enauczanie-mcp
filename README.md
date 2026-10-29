@@ -7,10 +7,11 @@
 ![MCP](https://img.shields.io/badge/MCP-000000?style=for-the-badge&logo=modelcontextprotocol&logoColor=white)
 ![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?style=for-the-badge&logo=claude&logoColor=white)
 
-Local MCP server that lets Claude Code read a student's account on eNauczanie PG
+Local MCP server that lets Claude Code use a student's account on eNauczanie PG
 (the Moodle platform of Gdańsk University of Technology) with the student's own web
-service token. Everything is read-only: the server never submits, posts, starts quiz
-attempts or marks anything as read.
+service token. By default it only reads. It never submits, posts, starts quiz attempts
+or marks anything as read. An opt-in [write mode](#write-mode) adds tools that work like
+the student's own buttons in Moodle.
 
 Tools:
 
@@ -25,6 +26,9 @@ Tools:
 - Exercises: `get_quiz_review` (finished attempts with chosen and correct answers),
   `get_h5p_content` (text of H5P exercises).
 - What is new: `get_recent_changes`, `get_notifications`.
+- Write mode only: `save_assignment_submission`, `submit_assignment`, `remove_submission`,
+  `list_group_choices`, `join_group`, `leave_group`, `list_vote_options`, `submit_vote`,
+  `get_survey`, `submit_survey`, `set_activity_done`, `mark_notification_read`.
 
 ## Requirements
 
@@ -82,6 +86,44 @@ Start a new Claude Code session and ask, for example, what is due in the next tw
 for the grades of a course, for the latest announcements or for a review of a finished
 quiz.
 
+## Write mode
+
+Write mode lets Claude act on the account the way the student does with Moodle's buttons.
+It is off unless `ENAUCZANIE_ALLOW_WRITE=1` is set in `.env` or in the server's environment.
+`get_token.py` keeps that line when it stores a new token. Start a new Claude Code session
+after turning it on or off.
+
+```bash
+echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
+```
+
+| Moodle button | Tools |
+|---|---|
+| Add submission, Save changes | `save_assignment_submission` (files and/or online text) |
+| Submit assignment | `submit_assignment` |
+| Remove submission | `remove_submission` |
+| Group sign-up (`choicegroup`) | `list_group_choices`, `join_group`, `leave_group` |
+| Poll (`choice`) | `list_vote_options`, `submit_vote` |
+| Survey (`feedback`) | `get_survey`, `submit_survey` |
+| Mark as done | `set_activity_done` |
+| Notification read | `mark_notification_read` |
+
+- `save_assignment_submission`, `submit_assignment`, `remove_submission`, `leave_group` and
+  `submit_survey` change nothing without `confirm=true`. The first call only describes what
+  would happen, so Claude can show it to you before anything reaches Moodle.
+- `join_group`, `submit_vote`, `set_activity_done` and `mark_notification_read` act at once.
+- Many assignments have no draft stage. There, saving already hands the work in and the
+  teacher sees it. The description before saving says which case applies.
+- New files replace every file already in the submission. On a team assignment the change
+  applies to the shared submission of the whole group.
+- Online text is plain text. A blank line starts a new paragraph, other formatting such as
+  bold or lists is not kept.
+- Quiz and H5P attempts are not available, because they are graded tests. Attendance and
+  consent forms are not available either, because the mobile-app token has no functions for
+  them.
+- When the server runs in Docker, `file_paths` are paths inside the container, so mount the
+  folder that holds the files.
+
 ## Prebuilt image
 
 Each release publishes an image to GHCR and attaches a wheel and an sdist. Both hold only the
@@ -104,15 +146,17 @@ claude mcp add enauczanie -s user -- docker run -i --rm --env-file "$(pwd)/.env"
 Claude Code starts the server as a child process and talks to it over stdio. Each tool makes
 one or more calls to Moodle's REST web service (`/webservice/rest/server.php`), turns HTML into
 plain text and cuts long texts and lists, so a course tree or a forum thread fits the model's
-context.
+context. Write tools first upload files through `/webservice/upload.php` into the user's
+private draft area, then call the same functions the Moodle mobile app uses for each button.
 
 | Path | Role |
 |---|---|
-| `enauczanie_mcp/server.py` | tool definitions and the instructions sent to the model |
-| `enauczanie_mcp/moodle_client.py` | REST calls, concurrent calls and checked file downloads |
-| `enauczanie_mcp/config.py` | reads `MOODLE_URL`, `MOODLE_TOKEN` and `ENAUCZANIE_DOWNLOAD_DIR` from the environment, then `.env` |
-| `enauczanie_mcp/formatting.py` | HTML to text, the course tree and size limits |
-| `enauczanie_mcp/assignments.py`, `grades.py`, `forums.py`, `quizzes.py`, `updates.py` | shape Moodle's answers for each group of tools |
+| `enauczanie_mcp/server.py` | read tools and the instructions sent to the model |
+| `enauczanie_mcp/writing.py` | write tools, registered only in write mode |
+| `enauczanie_mcp/moodle_client.py` | REST calls, concurrent calls, draft uploads and checked file downloads |
+| `enauczanie_mcp/config.py` | reads `MOODLE_URL`, `MOODLE_TOKEN`, `ENAUCZANIE_DOWNLOAD_DIR` and `ENAUCZANIE_ALLOW_WRITE` from the environment, then `.env` |
+| `enauczanie_mcp/formatting.py` | HTML to text, plain text to HTML, the course tree and size limits |
+| `enauczanie_mcp/assignments.py`, `grades.py`, `forums.py`, `quizzes.py`, `surveys.py`, `updates.py` | shape Moodle's answers for each group of tools |
 | `enauczanie_mcp/h5p.py` | reads the text out of a downloaded H5P package |
 | `get_token.py` | gets the token through the mobile-app login flow |
 
@@ -121,8 +165,9 @@ There are no automated tests.
 ## Security
 
 - The token is stored only in `.env`, which is gitignored together with
-  `token_result.txt`, `functions.json` and `downloads/`. Never commit or share it; it
-  gives read access to your whole account.
+  `token_result.txt`, `functions.json` and `downloads/`. Never commit or share it. It
+  gives the same access as the Moodle mobile app, including handing in work, whatever
+  mode the server runs in.
 - The server sends the token only to the configured `MOODLE_URL` and never puts it in a
   tool result or error message. File downloads accept only `pluginfile.php` URLs of that
   instance.
@@ -130,7 +175,8 @@ There are no automated tests.
   pluginfile path. Delete a file to re-download it. `ENAUCZANIE_DOWNLOAD_DIR` overrides
   the location.
 - Text returned by the tools was written by teachers and students. The server tells the
-  model to treat it as content, not as instructions.
+  model to treat it as content, not as instructions, and to use write tools only for what
+  the user asked for.
 
 ## License
 
