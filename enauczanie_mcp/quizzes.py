@@ -139,7 +139,9 @@ def parse_question_form(html: str) -> dict:
     result = {"text": form.texts.get("qtext", ""), "hidden": hidden}
     count = len({c["name"] for c in radios}) + bool(boxes) + len(texts) + len(others)
     if not count:
-        return {**result, "kind": "none"}
+        # Drag-and-drop questions and attachment-only essays keep the answer in hidden fields that the page's script fills.
+        stored = [name for name in hidden if ":" not in _FIELD.fullmatch(name)[1] and not name.endswith("format")]
+        return {**result, "kind": "unsupported" if stored else "none"}
     if count > 1 or others:
         return {**result, "kind": "unsupported"}
     if radios:

@@ -12,6 +12,8 @@ _MESSAGE = re.compile(r"<span class=\"messages\">\s*<ion-item[^>]*>\s*<ion-label
 _STATUS = re.compile(r'<ion-radio value="(\d+)">(.*?)</ion-radio>', re.S)
 
 MESSAGES = {
+    "": "Moodle shows a message without its text, in this plugin a computer outside the allowed networks or a device "
+    "already used to mark another student",
     "closed": "the session is not open for self-marking now",
     "subnetwrong": "attendance is taken only from allowed networks, usually the campus, and this computer is not in one",
     "preventsharederror": "self-marking is blocked because this device already marked another student",
@@ -33,8 +35,8 @@ def parse_sessions(page: str) -> list[dict]:
 
 
 def parse_messages(page: str) -> list[str]:
-    # Messages the plugin stores under a fixed number render with an empty key, so only their effect is visible.
-    return [MESSAGES.get(key, key) for key in _MESSAGE.findall(page) if key]
+    # The plugin stores the network and shared-device messages under fixed numbers, which renders them with an empty key.
+    return [MESSAGES.get(key, key) for key in _MESSAGE.findall(page)]
 
 
 def parse_statuses(form: str) -> dict[int, str]:

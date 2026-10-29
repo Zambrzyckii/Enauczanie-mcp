@@ -549,9 +549,9 @@ def mark_attendance(
     """WRITE: the "Submit attendance" button of an attendance activity (module of type attendance, id from
     get_course_contents). Records the user's attendance at its session open for self-marking now, so use it only when
     the user says they are at that class now. password is the one the teacher gives in class, status the name of the
-    status the user picks where Moodle offers several. Without confirm=true Moodle is not contacted, because opening
-    the session list can already record attendance; show the error to the user and repeat with confirm=true only
-    after their explicit yes."""
+    status the user picks where Moodle offers several. Without confirm=true the attendance activity is not opened,
+    because opening its session list can already record attendance; show the error to the user and repeat with
+    confirm=true only after their explicit yes."""
     module = _module(course_id, module_id, "attendance")
     if not confirm:
         lines = [
@@ -602,7 +602,10 @@ def _survey_quiz(course_id: int, module_id: int) -> dict:
     marks = (quiz.get("grade"), quiz.get("sumgrades"))
     if None in marks or min(float(m) for m in marks) >= ALMOST_ZERO:
         raise ToolError("This quiz gives marks, so it is a test; the write tools only fill in quizzes without marks")
-    if quiz.get("navmethod") == "sequential":
+    # Moodle sends the navigation setting only while the quiz is open to the user.
+    if "navmethod" not in quiz:
+        raise ToolError("Moodle does not open this quiz to the user now; it is closed or restricted")
+    if quiz["navmethod"] != "free":
         raise ToolError("This quiz must be answered page by page in a fixed order; the user fills it in in the browser")
     return quiz
 
@@ -732,7 +735,10 @@ def submit_quiz_survey(
         data.update(_quiz_answer_data(slot, questions[slot][1], answer))
     if not confirm:
         raise _confirm_first("saved or sent", _quiz_survey_preview(quiz, questions, answers))
-    _process_attempt(attempt["id"], data, finish=False)
+    state = _process_attempt(attempt["id"], data, finish=False)
+    if state != "inprogress":
+        # When the attempt's time is up, Moodle submits it or makes it overdue on any save.
+        raise ToolError(f"Moodle ended the attempt itself because its time was up; its state is now {state}")
     saved = _attempt_questions(attempt["id"])
     rejected = [str(slot) for slot in answers if saved[slot][0].get("stateclass") != "answersaved"]
     if rejected:

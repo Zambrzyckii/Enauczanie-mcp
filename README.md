@@ -121,9 +121,9 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
 - `join_group` keeps the groups you are already in where the sign-up allows several. Where it
   allows one, joining moves you out of your current group.
 - `mark_attendance` records your attendance at the session that is open for self-marking now,
-  so use it only when you are at that class. It does not contact Moodle before `confirm=true`,
-  because where the teacher set an automatic status without a password, opening the list of
-  sessions already records it. Moodle still checks the password the teacher gives in class and
+  so use it only when you are at that class. It does not open the attendance activity before
+  `confirm=true`, because where the teacher set an automatic status without a password, opening
+  the list of sessions already records it. Moodle still checks the password the teacher gives in class and
   may take marks only from the campus network. Where it offers several statuses, you choose one.
 - `get_quiz_survey` and `submit_quiz_survey` answer only quizzes that give no marks, such as
   surveys made as quizzes. They use Moodle's own test, `quiz_has_grades()`, and refuse a quiz
