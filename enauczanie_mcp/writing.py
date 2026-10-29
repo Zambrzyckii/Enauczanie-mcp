@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .assignments import summarize_status
 from .formatting import compact, cut, find, full_text, html_to_text, strip_multilang, text_to_html
+from .moodle_client import MoodleApiError
 from .server import ToolError, _client, _moodle_tool, _userid, server
 from .surveys import CHOICE_TYPES, numeric_range, parse_choices, range_text, summarize_item
 
@@ -252,17 +253,32 @@ def join_group(course_id: int, module_id: int, option_id: int, confirm: bool = F
 
 @server.tool()
 @_moodle_tool
-def leave_group(course_id: int, module_id: int, confirm: bool = False) -> dict:
-    """WRITE: withdraw the user's choice from a group sign-up. Someone else may take the spot, so it requires the
-    user's explicit go-ahead, then confirm=true."""
-    if not confirm:
-        raise ToolError(
-            "Leaving frees the spot and someone else may take it. Ask the user to confirm, then call again with "
-            "confirm=true."
-        )
+def leave_group(course_id: int, module_id: int, option_id: int, confirm: bool = False) -> dict:
+    """WRITE: withdraw the user from one option of a group sign-up (option_id from list_group_choices). Someone else
+    may take the place, so without confirm=true nothing changes and the error names the group; repeat with
+    confirm=true only after the user's explicit yes."""
     instance = _resolve_instance(course_id, module_id, "choicegroup")
-    _client().call("mod_choicegroup_delete_choicegroup_responses", choicegroupid=instance)
-    return {"options": _group_options(instance)}
+    chosen = [o for o in _group_options(instance) if o.get("chosen")]
+    target = find(chosen, "option_id", option_id)
+    if not target:
+        raise ToolError(f"The user is not in option {option_id} of this group sign-up")
+    if not confirm:
+        raise _confirm_first("changed", [f"Leaves: {target['group']}", "Someone else may take the place"])
+    keep = [o for o in chosen if o["option_id"] != option_id]
+    if keep:
+        _submit_group_answer(instance, None, keep)
+    else:
+        try:
+            _client().call("mod_choicegroup_delete_choicegroup_responses", choicegroupid=instance)
+        except MoodleApiError as exc:
+            # Deleting is refused where several groups are allowed; there an empty answer withdraws instead.
+            if exc.errorcode != "missingrequiredcapability":
+                raise
+            _submit_group_answer(instance, None, [])
+    options = _group_options(instance)
+    if find(options, "option_id", option_id).get("chosen"):
+        raise ToolError(f"Moodle did not withdraw the user from {target['group']} (changes may be locked)")
+    return {"options": options}
 
 
 def _vote_options(instance: int) -> list[dict]:
