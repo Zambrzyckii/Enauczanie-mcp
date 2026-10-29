@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 
 from .assignments import summarize_status
+from .attendance import APP_VERSION_CODE, MESSAGES, asks_password, can_submit, parse_messages, parse_sessions, parse_statuses
 from .formatting import compact, cut, find, full_text, html_to_text, strip_multilang, text_to_html
 from .moodle_client import MoodleApiError
 from .server import ToolError, _client, _moodle_tool, _userid, server
@@ -16,7 +17,7 @@ from .surveys import CHOICE_TYPES, numeric_range, parse_choices, range_text, sum
 ONLINE_TEXT_HTML = 1
 
 
-def _resolve_instance(course_id: int, module_id: int, modname: str) -> int:
+def _module(course_id: int, module_id: int, modname: str) -> dict:
     sections = _client().call(
         "core_course_get_contents", courseid=course_id, **{"options[0][name]": "cmid", "options[0][value]": module_id}
     )
@@ -25,7 +26,11 @@ def _resolve_instance(course_id: int, module_id: int, modname: str) -> int:
         raise ToolError(f"No module {module_id} in course {course_id}")
     if module["modname"] != modname:
         raise ToolError(f"Module {module_id} is a {module['modname']}, not a {modname}")
-    return module["instance"]
+    return module
+
+
+def _resolve_instance(course_id: int, module_id: int, modname: str) -> int:
+    return _module(course_id, module_id, modname)["instance"]
 
 
 def _assignment_status(assignment_id: int) -> dict:
@@ -497,3 +502,86 @@ def submit_survey(
             )
         page = jumpto
     raise ToolError("Moodle did not finish the survey")
+
+
+def _attendance_page(course_id: int, module_id: int, method: str, **args) -> str:
+    args = {"cmid": module_id, "courseid": course_id, "appversioncode": APP_VERSION_CODE, **args}
+    params = {}
+    for index, (name, value) in enumerate((n, v) for n, v in args.items() if v is not None):
+        params[f"args[{index}][name]"] = name
+        params[f"args[{index}][value]"] = value
+    payload = _client().call("tool_mobile_get_content", component="mod_attendance", method=method, **params)
+    return "".join(template.get("html", "") for template in payload.get("templates", []))
+
+
+def _attendance_status(offered: dict[int, str], status: str | None) -> int | None:
+    """The status id to send. None leaves it to Moodle, which a session with an automatic status sets itself."""
+    if not offered:
+        return None
+    if status:
+        chosen = [stid for stid, text in offered.items() if text.casefold() == status.strip().casefold()]
+        if not chosen:
+            raise ToolError(f"No status {status!r} is offered now; Moodle offers: {', '.join(offered.values())}")
+        return chosen[0]
+    if len(offered) > 1:
+        raise ToolError(
+            f"Moodle offers several statuses: {', '.join(offered.values())}. Ask the user which one applies and pass "
+            "it as status; nothing was sent"
+        )
+    return next(iter(offered))
+
+
+def _recorded(session: dict) -> dict:
+    return compact({"session": session["time"], "group": session["group"], "status": session["status"]})
+
+
+@server.tool()
+@_moodle_tool
+def mark_attendance(
+    course_id: int, module_id: int, status: str | None = None, password: str | None = None, confirm: bool = False
+) -> dict:
+    """WRITE: the "Submit attendance" button of an attendance activity (module of type attendance, id from
+    get_course_contents). Records the user's attendance at its session open for self-marking now, so use it only when
+    the user says they are at that class now. password is the one the teacher gives in class, status the name of the
+    status the user picks where Moodle offers several. Without confirm=true Moodle is not contacted, because opening
+    the session list can already record attendance; show the error to the user and repeat with confirm=true only
+    after their explicit yes."""
+    module = _module(course_id, module_id, "attendance")
+    if not confirm:
+        lines = [
+            f"Attendance: {strip_multilang(module['name'])}",
+            "Marks the user at the session of this activity that is open for self-marking now",
+            f"Status: {status}" if status else "Status: the one Moodle offers; if it offers several, nothing is sent",
+            "Password: given" if password else "Password: none, so a session that asks for one is refused",
+            "Only for a class the user is at now",
+        ]
+        raise _confirm_first("recorded", lines)
+    page = _attendance_page(course_id, module_id, "mobile_view_activity")
+    listed = parse_sessions(page)
+    open_now = [s for s in listed if s["session_id"]]
+    if len(open_now) > 1:
+        raise ToolError(f"Several sessions are open for marking ({', '.join(s['time'] for s in open_now)}); use the app")
+    if not open_now:
+        # The plugin hides the session id but shows no status only where the session takes marks from other networks.
+        if any(not s["status"] for s in listed):
+            raise ToolError(f"Moodle does not take attendance from here: {MESSAGES['subnetwrong']}")
+        if listed:
+            note = "No session was waiting for a mark; Moodle shows these statuses, set earlier or when the list opened"
+            return {"recorded": [_recorded(s) for s in listed], "note": note}
+        reasons = "; ".join(parse_messages(page))
+        raise ToolError("No session of this activity is open for self-marking now" + (f" ({reasons})" if reasons else ""))
+    session = open_now[0]
+    form = _attendance_page(course_id, module_id, "mobile_user_form", sessid=session["session_id"])
+    if not can_submit(form):
+        reasons = "; ".join(parse_messages(form)) or "the form has no submit button"
+        raise ToolError(f"Moodle does not take attendance for {session['time']} now: {reasons}")
+    if asks_password(form) and not password:
+        raise ToolError("This session asks for the password the teacher gives in class; nothing was sent")
+    status_id = _attendance_status(parse_statuses(form), status)
+    page = _attendance_page(
+        course_id, module_id, "mobile_view_activity", sessid=session["session_id"], status=status_id, studentpass=password
+    )
+    after = next((s for s in parse_sessions(page) if (s["time"], s["group"]) == (session["time"], session["group"])), {})
+    if not after.get("status"):
+        raise ToolError(f"Moodle did not record the attendance: {'; '.join(parse_messages(page)) or 'it gave no reason'}")
+    return {"recorded": [_recorded(after)]}
