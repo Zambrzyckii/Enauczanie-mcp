@@ -77,8 +77,13 @@ def handle_token(url: str) -> str:
     token = parts[1]
 
     env_path = os.path.join(HERE, ".env")
+    extra = ""
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            kept = [line for line in f.read().splitlines() if line and not line.startswith(("MOODLE_URL=", "MOODLE_TOKEN="))]
+        extra = "".join(line + "\n" for line in kept)
     with open(env_path, "w") as f:
-        f.write(f"MOODLE_URL={BASE_URL}\nMOODLE_TOKEN={token}\n")
+        f.write(f"MOODLE_URL={BASE_URL}\nMOODLE_TOKEN={token}\n{extra}")
     os.chmod(env_path, 0o600)
 
     info = ws_call(token, "core_webservice_get_site_info")
