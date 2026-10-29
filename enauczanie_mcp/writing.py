@@ -235,6 +235,19 @@ def submit_vote(course_id: int, module_id: int, option_ids: list[int]) -> dict:
 
 @server.tool()
 @_moodle_tool
+def set_activity_done(module_id: int, done: bool = True) -> dict:
+    """WRITE: the "Mark as done" button of an activity with manual completion (module_id from get_course_contents,
+    which shows its completion). done=false clears the mark. Moodle refuses activities it tracks automatically."""
+    result = _client().call(
+        "core_completion_update_activity_completion_status_manually", cmid=module_id, completed=int(done)
+    )
+    if not result.get("status"):
+        raise ToolError("Moodle did not change the completion mark")
+    return {"module_id": module_id, "done": done}
+
+
+@server.tool()
+@_moodle_tool
 def mark_notification_read(notification_id: int) -> dict:
     """WRITE: mark one Moodle notification as read (id from get_notifications)."""
     _client().call("core_message_mark_notification_read", notificationid=notification_id)
