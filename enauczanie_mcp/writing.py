@@ -7,7 +7,7 @@ attempt results are deliberately not implemented.
 from pathlib import Path
 
 from .assignments import summarize_status
-from .formatting import compact, find, strip_multilang
+from .formatting import compact, find, strip_multilang, text_to_html
 from .server import ToolError, _client, _moodle_tool, server
 
 ONLINE_TEXT_HTML = 1
@@ -29,6 +29,56 @@ def _assignment_status(assignment_id: int) -> dict:
     return summarize_status(_client().call("mod_assign_get_submission_status", assignid=assignment_id))
 
 
+def _assignment(course_id: int, assignment_id: int) -> dict:
+    payload = _client().call("mod_assign_get_assignments", **{"courseids[0]": course_id})
+    assignment = find([a for c in payload["courses"] for a in c["assignments"]], "id", assignment_id)
+    if not assignment:
+        raise ToolError(f"No assignment {assignment_id} in course {course_id}")
+    return assignment
+
+
+def _submission_setting(assignment: dict, plugin: str, name: str) -> str:
+    configs = assignment.get("configs", [])
+    wanted = ("assignsubmission", plugin, name)
+    return next((c["value"] for c in configs if (c.get("subtype"), c["plugin"], c["name"]) == wanted), "")
+
+
+def _check_submission(assignment: dict, payload: dict, paths: list[Path], text: str | None) -> None:
+    if not (payload.get("lastattempt") or {}).get("canedit"):
+        raise ToolError("Moodle does not let the user change this submission now (closed, locked or handed in)")
+    if paths and _submission_setting(assignment, "file", "enabled") != "1":
+        raise ToolError("This assignment does not accept files")
+    max_files = int(_submission_setting(assignment, "file", "maxfilesubmissions") or 0)
+    if max_files and len(paths) > max_files:
+        raise ToolError(f"This assignment accepts at most {max_files} files")
+    if text and _submission_setting(assignment, "onlinetext", "enabled") != "1":
+        raise ToolError("This assignment does not accept online text")
+    if paths and not text and summarize_status(payload).get("my_text"):
+        raise ToolError("Saving only files would erase the online text already in the submission; pass it as text too")
+
+
+def _save_preview(assignment: dict, status: dict, paths: list[Path], text: str | None) -> str:
+    lines = [
+        "Nothing saved yet. Show the user this and call again with confirm=true only after their explicit yes.",
+        f"Assignment: {strip_multilang(assignment['name'])}",
+    ]
+    if paths:
+        lines.append(f"Files: {', '.join(p.name for p in paths)}")
+        current = [f["filename"] for f in status.get("my_files", [])]
+        if current:
+            lines.append(f"They replace every file now in the submission: {', '.join(current)}")
+    if text:
+        replaces = " replaces the current one" if status.get("my_text") else ""
+        lines.append(f"Online text: the given text{replaces}")
+    if assignment.get("submissiondrafts"):
+        lines.append("Saved as a draft; submit_assignment hands it in")
+    else:
+        lines.append("This assignment has no draft stage: saving hands it in for grading and the teacher sees it at once")
+    if assignment.get("teamsubmission"):
+        lines.append("Team assignment: this changes the shared submission of the whole group")
+    return "\n".join(lines)
+
+
 def _group_options(instance: int) -> list[dict]:
     options = _client().call("mod_choicegroup_get_choicegroup_options", choicegroupid=instance, userid=0)["options"]
     return [
@@ -48,26 +98,42 @@ def _group_options(instance: int) -> list[dict]:
 
 @server.tool()
 @_moodle_tool
-def save_assignment_draft(assignment_id: int, file_paths: list[str] | None = None, text: str | None = None) -> dict:
-    """WRITE: save local files and/or online text as the user's draft submission of an assignment (assignment_id
-    from list_assignments). Only content the user provided. Does not submit; submit_assignment does."""
+def save_assignment_submission(
+    course_id: int,
+    assignment_id: int,
+    file_paths: list[str] | None = None,
+    text: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    """WRITE: save local files and/or plain text (online text) as the user's submission of an assignment (ids from
+    list_assignments). New files replace every file already in the submission. Without confirm=true nothing is saved
+    and the error describes the change, including whether saving already hands the work in; show it to the user and
+    repeat with confirm=true only after their explicit yes."""
     if not file_paths and not text:
         raise ToolError("Nothing to save: give file_paths, text or both")
+    paths = [Path(p).expanduser() for p in file_paths or []]
+    missing = [str(p) for p in paths if not p.is_file()]
+    if missing:
+        raise ToolError(f"Not a file: {', '.join(missing)}")
+    assignment = _assignment(course_id, assignment_id)
+    payload = _client().call("mod_assign_get_submission_status", assignid=assignment_id)
+    _check_submission(assignment, payload, paths, text)
+    if not confirm:
+        raise ToolError(_save_preview(assignment, summarize_status(payload), paths, text))
     params: dict = {}
-    if file_paths:
-        paths = [Path(p).expanduser() for p in file_paths]
-        missing = [str(p) for p in paths if not p.is_file()]
-        if missing:
-            raise ToolError(f"Not a file: {', '.join(missing)}")
+    if paths:
         params["plugindata[files_filemanager]"] = _client().upload_draft(paths)
-    if text:
-        params["plugindata[onlinetext_editor][text]"] = text
+    if text or _submission_setting(assignment, "onlinetext", "enabled") == "1":
+        # Item id 0 stores the text as is; a fresh draft area would delete the files embedded in the old text.
+        params["plugindata[onlinetext_editor][text]"] = text_to_html(text or "")
         params["plugindata[onlinetext_editor][format]"] = ONLINE_TEXT_HTML
-        params["plugindata[onlinetext_editor][itemid]"] = _client().call("core_files_get_unused_draft_itemid")["itemid"]
+        params["plugindata[onlinetext_editor][itemid]"] = 0
     warnings = _client().call("mod_assign_save_submission", assignmentid=assignment_id, **params)
     if warnings:
         raise ToolError(f"Moodle rejected the submission: {warnings[0].get('message', warnings[0])}")
-    return {"saved": True, "status": _assignment_status(assignment_id)}
+    status = _assignment_status(assignment_id)
+    kept = {f["filename"] for f in status.get("my_files", [])}
+    return compact({"saved": True, "status": status, "files_not_kept": [p.name for p in paths if p.name not in kept]})
 
 
 @server.tool()
