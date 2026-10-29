@@ -7,9 +7,9 @@ attempt results are deliberately not implemented.
 from pathlib import Path
 
 from .assignments import summarize_status
-from .formatting import compact, find, full_text, html_to_text, strip_multilang, text_to_html
+from .formatting import compact, cut, find, full_text, html_to_text, strip_multilang, text_to_html
 from .server import ToolError, _client, _moodle_tool, _userid, server
-from .surveys import summarize_item
+from .surveys import CHOICE_TYPES, numeric_range, parse_choices, range_text, summarize_item
 
 ONLINE_TEXT_HTML = 1
 
@@ -317,3 +317,111 @@ def get_survey(course_id: int, module_id: int) -> dict:
     if result["can_submit"]:
         result["pages"] = [[summarize_item(item) for item in page] for page in _survey_pages(survey["id"])]
     return compact(result)
+
+
+def _chosen_options(item: dict, answer, subtype: str, count: int) -> list[int]:
+    chosen = [] if answer is None else answer if isinstance(answer, list) else [answer]
+    chosen = [int(n) if isinstance(n, str) and n.isdigit() else n for n in chosen]
+    if not all(isinstance(n, int) and 1 <= n <= count for n in chosen) or (subtype != "c" and len(chosen) > 1):
+        wanted = "a list of option numbers" if subtype == "c" else "one option number"
+        raise ToolError(f"Item {item['id']}: answer with {wanted} from 1 to {count}")
+    return chosen
+
+
+def _numeric_answer(item: dict, answer) -> str:
+    low, high = numeric_range(item.get("presentation", ""))
+    try:
+        value = float(answer)
+    except (TypeError, ValueError):
+        raise ToolError(f"Item {item['id']}: answer with a number") from None
+    if (low is not None and value < low) or (high is not None and value > high):
+        raise ToolError(f"Item {item['id']}: the number must be from {range_text(low, high)}")
+    return f"{value:g}"
+
+
+def _survey_responses(item: dict, answer) -> list[tuple[str, object]]:
+    """The name/value pairs the Moodle app sends for one question; answer None leaves it empty."""
+    name, kind = f"{item['typ']}_{item['id']}", item["typ"]
+    if kind == "info":
+        return [(name, "__CURRENT__TIMESTAMP__" if item.get("presentation") == "1" else item.get("otherdata", ""))]
+    if kind in CHOICE_TYPES:
+        subtype, labels = parse_choices(item.get("presentation", ""))
+        chosen = _chosen_options(item, answer, subtype, len(labels))
+        if subtype == "c":
+            return [(f"{name}[0]", 0)] + [(f"{name}[{n}]", n if n in chosen else 0) for n in range(1, len(labels) + 1)]
+        key = f"{name}[0]" if kind == "multichoice" and subtype == "d" else name
+        return [(key, chosen[0] if chosen else 0)]
+    if kind == "numeric":
+        return [(name, "" if answer is None else _numeric_answer(item, answer))]
+    return [(name, "" if answer is None else str(answer))]
+
+
+def _survey_preview(survey: dict, access: dict, items: dict[int, dict], answers: dict) -> list[str]:
+    lines = [
+        f"Survey: {strip_multilang(survey['name'])}",
+        "Anonymous: the teacher does not see who answered" if access.get("isanonymous")
+        else "Not anonymous: the teacher sees the user's name next to the answers",
+    ]
+    for item_id, answer in answers.items():
+        summary = summarize_item(items[item_id])
+        labels = {o["option"]: o["text"] for o in summary.get("options", [])}
+        chosen = answer if isinstance(answer, list) else [answer]
+        shown = ", ".join(labels.get(int(n), str(n)) for n in chosen) if labels else str(answer)
+        lines.append(f"{cut(summary.get('text', ''), 80)[0]}: {shown}")
+    if not survey.get("multiple_submit"):
+        lines.append("The survey takes one submission; it cannot be changed afterwards")
+    return lines
+
+
+@server.tool()
+@_moodle_tool
+def submit_survey(
+    course_id: int, module_id: int, answers: dict[int, int | float | str | list[int]], confirm: bool = False
+) -> dict:
+    """WRITE: fill in and send a survey (module of type feedback), like its submit button. answers maps item_id from
+    get_survey to one option number, a list of option numbers (several-choice questions), a number or a text, all
+    given by the user. Without confirm=true nothing is sent and the error lists the answers for the user to approve."""
+    survey = _survey(course_id, module_id)
+    access = _client().call("mod_feedback_get_feedback_access_information", feedbackid=survey["id"])
+    if not access.get("cansubmit"):
+        raise ToolError("Moodle does not take answers to this survey now (closed or already submitted)")
+    pages = _survey_pages(survey["id"])
+    items = {item["id"]: item for page in pages for item in page}
+    unknown = [str(item_id) for item_id in answers if item_id not in items]
+    if unknown:
+        raise ToolError(f"No question with item id {', '.join(unknown)} in this survey")
+    if any(item["typ"] == "captcha" for item in items.values()):
+        raise ToolError("This survey has a captcha, so the user has to send it in the browser")
+    missing = [
+        str(item_id)
+        for item_id, item in items.items()
+        if item.get("required") and not item.get("dependitem") and answers.get(item_id) in (None, "", [])
+    ]
+    if missing:
+        raise ToolError(f"Required questions without an answer, item ids: {', '.join(missing)}")
+    # Building every page first validates all answers before anything reaches Moodle.
+    responses = [
+        [pair for item in page if item.get("hasvalue") for pair in _survey_responses(item, answers.get(item["id"]))]
+        for page in pages
+    ]
+    if not confirm:
+        raise _confirm_first("sent", _survey_preview(survey, access, items, answers))
+    page = 0
+    for _ in pages:
+        params = {}
+        for index, (name, value) in enumerate(responses[page]):
+            params[f"responses[{index}][name]"] = name
+            params[f"responses[{index}][value]"] = value
+        result = _client().call("mod_feedback_process_page", feedbackid=survey["id"], page=page, **params)
+        if result.get("completed"):
+            check = _client().call("mod_feedback_get_feedback_access_information", feedbackid=survey["id"])
+            message = full_text(result.get("completionpagecontents", ""))
+            return compact({"submitted": True, "confirmed": bool(check.get("isalreadysubmitted")), "message": message})
+        jumpto = result.get("jumpto")
+        if jumpto == page or not isinstance(jumpto, int) or not 0 <= jumpto < len(pages):
+            raise ToolError(
+                f"Moodle did not accept the answers on page {page + 1} (a required answer or a value range); "
+                "earlier pages stay saved as unfinished and the survey is not sent"
+            )
+        page = jumpto
+    raise ToolError("Moodle did not finish the survey")

@@ -21,6 +21,10 @@ def numeric_range(presentation: str) -> tuple[float | None, float | None]:
     return (float(low) if low else None), (float(high) if high else None)
 
 
+def range_text(low: float | None, high: float | None) -> str:
+    return " to ".join("any" if bound is None else f"{bound:g}" for bound in (low, high))
+
+
 def summarize_item(item: dict) -> dict:
     kind = item["typ"]
     summary = {
@@ -37,8 +41,7 @@ def summarize_item(item: dict) -> dict:
     elif kind in TEXT_TYPES:
         summary["answer"] = "text"
     elif kind == "numeric":
-        low, high = ("any" if bound is None else f"{bound:g}" for bound in numeric_range(item.get("presentation", "")))
-        summary["answer"] = f"number from {low} to {high}"
+        summary["answer"] = f"number from {range_text(*numeric_range(item.get('presentation', '')))}"
     elif kind == "captcha":
         summary["answer"] = "captcha, only in the browser"
     if item.get("dependitem"):
