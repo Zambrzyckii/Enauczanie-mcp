@@ -130,7 +130,7 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
   whose maximum grade and question marks are both above zero before any attempt is started or
   answered.
   `get_quiz_survey` continues an attempt already in progress. `submit_quiz_survey` first saves
-  the answers and checks that Moodle accepted each one, and only then finishes the attempt.
+  the answers and checks that the attempt shows each one, and only then finishes the attempt.
   They handle questions with one answer (true/false too), with several answers, with a short
   text and essays. Other question types and quizzes with sequential navigation are answered in
   the browser. A quiz is not anonymous, so the teacher sees your name with the answers.

@@ -683,6 +683,16 @@ def _quiz_answer_data(slot: int, form: dict, answer) -> dict:
     return data
 
 
+def _answer_kept(form: dict, data: dict) -> bool:
+    """Whether the re-read question shows the answer that was sent. Its state alone does not tell: under immediate
+    feedback and interactive behaviours a saved answer stays "not yet answered" until it is checked."""
+    if form["kind"] == "one":
+        return any(option["checked"] and option["value"] == data.get(form["name"]) for option in form["options"])
+    if form["kind"] == "several":
+        return all(option["checked"] == (data.get(option["name"]) == "1") for option in form["options"])
+    return bool(form["current"])
+
+
 def _process_attempt(attempt_id: int, data: dict, finish: bool) -> str:
     params = {}
     for index, (name, value) in enumerate(data.items()):
@@ -740,7 +750,11 @@ def submit_quiz_survey(
         # When the attempt's time is up, Moodle submits it or makes it overdue on any save.
         raise ToolError(f"Moodle ended the attempt itself because its time was up; its state is now {state}")
     saved = _attempt_questions(attempt["id"])
-    rejected = [str(slot) for slot in answers if saved[slot][0].get("stateclass") != "answersaved"]
+    rejected = [
+        str(slot)
+        for slot in answers
+        if saved[slot][0].get("stateclass") == "invalidanswer" or not _answer_kept(saved[slot][1], data)
+    ]
     if rejected:
         raise ToolError(
             f"Moodle did not accept the answers to questions {', '.join(rejected)}; the answers it took stay saved in "
