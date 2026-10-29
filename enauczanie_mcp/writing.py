@@ -7,8 +7,9 @@ attempt results are deliberately not implemented.
 from pathlib import Path
 
 from .assignments import summarize_status
-from .formatting import compact, find, html_to_text, strip_multilang, text_to_html
+from .formatting import compact, find, full_text, html_to_text, strip_multilang, text_to_html
 from .server import ToolError, _client, _moodle_tool, _userid, server
+from .surveys import summarize_item
 
 ONLINE_TEXT_HTML = 1
 
@@ -277,3 +278,42 @@ def mark_notification_read(notification_id: int) -> dict:
     """WRITE: mark one Moodle notification as read (id from get_notifications)."""
     _client().call("core_message_mark_notification_read", notificationid=notification_id)
     return {"marked_read": notification_id}
+
+
+def _survey(course_id: int, module_id: int) -> dict:
+    feedbacks = _client().call("mod_feedback_get_feedbacks_by_courses", **{"courseids[0]": course_id})["feedbacks"]
+    survey = find(feedbacks, "coursemodule", module_id)
+    if not survey:
+        raise ToolError(f"No survey (module of type feedback) with module id {module_id} in course {course_id}")
+    return survey
+
+
+def _survey_pages(survey_id: int) -> list[list[dict]]:
+    pages: list[list[dict]] = []
+    while True:
+        payload = _client().call("mod_feedback_get_page_items", feedbackid=survey_id, page=len(pages))
+        if payload.get("warnings") and not payload["items"]:
+            raise ToolError(f"Moodle does not show the questions: {payload['warnings'][0].get('message')}")
+        pages.append(payload["items"])
+        if not payload.get("hasnextpage"):
+            return pages
+
+
+@server.tool()
+@_moodle_tool
+def get_survey(course_id: int, module_id: int) -> dict:
+    """List the questions of a survey (module of type feedback, id from get_course_contents) page by page, with item
+    ids, option numbers and required answers. Read-only; submit_survey sends the answers."""
+    survey = _survey(course_id, module_id)
+    access = _client().call("mod_feedback_get_feedback_access_information", feedbackid=survey["id"])
+    result = {
+        "name": strip_multilang(survey["name"]),
+        "intro": full_text(survey.get("intro", "")),
+        "anonymous": bool(access.get("isanonymous")),
+        "open": bool(access.get("isopen")),
+        "already_submitted": bool(access.get("isalreadysubmitted")),
+        "can_submit": bool(access.get("cansubmit")),
+    }
+    if result["can_submit"]:
+        result["pages"] = [[summarize_item(item) for item in page] for page in _survey_pages(survey["id"])]
+    return compact(result)
