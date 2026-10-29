@@ -7,7 +7,7 @@ attempt results are deliberately not implemented.
 from pathlib import Path
 
 from .assignments import summarize_status
-from .formatting import compact, find, strip_multilang, text_to_html
+from .formatting import compact, find, html_to_text, strip_multilang, text_to_html
 from .server import ToolError, _client, _moodle_tool, _userid, server
 
 ONLINE_TEXT_HTML = 1
@@ -222,15 +222,40 @@ def leave_group(course_id: int, module_id: int, confirm: bool = False) -> dict:
     return {"options": _group_options(instance)}
 
 
+def _vote_options(instance: int) -> list[dict]:
+    options = _client().call("mod_choice_get_choice_options", choiceid=instance)["options"]
+    return [
+        compact(
+            {
+                "option_id": o["id"],
+                "text": html_to_text(o.get("text", ""), None),
+                "taken": o.get("countanswers"),
+                "max": o.get("maxanswers") or None,
+                "chosen": o.get("checked") or None,
+                "locked": o.get("disabled") or None,
+            }
+        )
+        for o in options
+    ]
+
+
+@server.tool()
+@_moodle_tool
+def list_vote_options(course_id: int, module_id: int) -> dict:
+    """List the options of a poll (module of type choice, id from get_course_contents) with their option ids, answer
+    counts and the user's current choice. Read-only; submit_vote answers the poll."""
+    return {"options": _vote_options(_resolve_instance(course_id, module_id, "choice"))}
+
+
 @server.tool()
 @_moodle_tool
 def submit_vote(course_id: int, module_id: int, option_ids: list[int]) -> dict:
-    """WRITE: answer a poll (module of type choice, id from get_course_contents) with the option ids the user chose.
-    mod_choice option ids come from its results in the Moodle UI; Moodle validates them."""
+    """WRITE: answer a poll (module of type choice, id from get_course_contents) with the option ids the user chose
+    (from list_vote_options). Moodle validates them."""
     instance = _resolve_instance(course_id, module_id, "choice")
     params = {f"responses[{i}]": option_id for i, option_id in enumerate(option_ids)}
     _client().call("mod_choice_submit_choice_response", choiceid=instance, **params)
-    return {"submitted": option_ids}
+    return {"options": _vote_options(instance)}
 
 
 @server.tool()
