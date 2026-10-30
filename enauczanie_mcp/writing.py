@@ -730,6 +730,84 @@ def _process_attempt(attempt_id: int, data: dict, finish: bool) -> str:
     return payload["state"]
 
 
+def _page_answers(questions: dict[int, tuple[dict, dict]], answers: dict) -> tuple[dict, dict]:
+    """The answers that are not empty, each to a question get_quiz_survey shows now, and the form data sending them."""
+    answers = {slot: answer for slot, answer in answers.items() if answer not in (None, "", [])}
+    unknown = [str(slot) for slot in answers if slot not in questions]
+    if unknown:
+        raise ToolError(f"Give answers by question from get_quiz_survey; not shown there now: {', '.join(unknown)}")
+    data = {}
+    for slot, answer in answers.items():
+        data.update(_quiz_answer_data(slot, questions[slot][1], answer))
+    return answers, data
+
+
+def _save_answers(attempt_id: int, answers: dict, data: dict, page: int | None) -> list[str]:
+    """Save the answers without finishing the attempt; the questions whose answers Moodle did not keep."""
+    state = _process_attempt(attempt_id, data, finish=False)
+    if state != "inprogress":
+        # When the attempt's time is up, Moodle submits it or makes it overdue on any save.
+        raise ToolError(f"Moodle ended the attempt itself because its time was up; its state is now {state}")
+    saved = _attempt_questions(attempt_id, page)
+    return [
+        str(slot)
+        for slot in answers
+        if saved[slot][0].get("stateclass") == "invalidanswer" or not _answer_kept(saved[slot][1], data)
+    ]
+
+
+@server.tool()
+@_moodle_tool
+def next_quiz_page(
+    course_id: int, module_id: int, answers: dict[int, int | str | list[int]], skip_unsupported: bool = False
+) -> dict:
+    """WRITE: in a quiz with sequential navigation, save the answers to the current page from get_quiz_survey and
+    move on, like its "Next page" button, showing the questions of the next page. Moving on cannot be undone. It
+    takes no confirm because the user's own answers to the page shown are the approval: call it only with answers
+    the user gave for this page, or with none when the user says to leave it empty. skip_unsupported=true only after
+    the user says to skip the questions the page warns about. On the last page submit_quiz_survey sends the quiz."""
+    quiz = _survey_quiz(course_id, module_id)
+    if not _sequential(quiz):
+        raise ToolError("This quiz has free navigation; submit_quiz_survey answers all its pages at once")
+    attempt = _unfinished_attempt(quiz)
+    if not attempt:
+        raise ToolError("No attempt of this quiz is in progress; get_quiz_survey starts one")
+    page = attempt["currentpage"]
+    if page + 1 >= page_count(attempt):
+        raise ToolError("This is the last page; submit_quiz_survey answers it and sends the quiz")
+    questions = _attempt_questions(attempt["id"], page)
+    lost = _unsupported(questions)
+    if lost and not skip_unsupported:
+        raise ToolError(
+            f"Nothing was saved; questions {', '.join(lost)} cannot be answered here. The user answers this page in "
+            "the browser and clicks Next page there, or says to skip them"
+        )
+    answers, data = _page_answers(questions, answers)
+    rejected = _save_answers(attempt["id"], answers, data, page) if data else []
+    if rejected:
+        raise ToolError(
+            f"Moodle did not accept the answers to questions {', '.join(rejected)}; the answers it took stay saved and "
+            "the attempt stays on this page"
+        )
+    try:
+        _client().call("mod_quiz_view_attempt", attemptid=attempt["id"], page=page + 1)
+    except MoodleApiError as exc:
+        kept = "; the answers to this page stay saved" if data else ""
+        raise ToolError(f"Moodle did not move on to page {page + 2}: {exc.message}{kept}") from None
+    empty = [
+        str(question.get("number") or slot)
+        for slot, (question, form) in questions.items()
+        if slot not in answers and form["kind"] != "none"
+    ]
+    following = _attempt_questions(attempt["id"], page + 1)
+    result = {
+        "left_empty": empty,
+        "questions": [summarize_form_question(question, form) for question, form in following.values()],
+    }
+    result.update(_page_info(quiz, {**attempt, "currentpage": page + 1}, following))
+    return compact(result)
+
+
 def _quiz_survey_preview(quiz: dict, questions: dict[int, tuple[dict, dict]], answers: dict) -> list[str]:
     lines = [
         f"Survey: {strip_multilang(quiz['name'])}",
@@ -761,27 +839,12 @@ def submit_quiz_survey(
     if not attempt:
         raise ToolError("No attempt of this survey is in progress; get_quiz_survey starts one")
     questions = _attempt_questions(attempt["id"])
-    answers = {slot: answer for slot, answer in answers.items() if answer not in (None, "", [])}
-    unknown = [str(slot) for slot in answers if slot not in questions]
-    if unknown or not answers:
-        raise ToolError(
-            f"Give answers by question from get_quiz_survey; not in this survey: {', '.join(unknown) or 'none given'}"
-        )
-    data = {}
-    for slot, answer in answers.items():
-        data.update(_quiz_answer_data(slot, questions[slot][1], answer))
+    answers, data = _page_answers(questions, answers)
+    if not answers:
+        raise ToolError("Give answers by question from get_quiz_survey; none given")
     if not confirm:
         raise _confirm_first("saved or sent", _quiz_survey_preview(quiz, questions, answers))
-    state = _process_attempt(attempt["id"], data, finish=False)
-    if state != "inprogress":
-        # When the attempt's time is up, Moodle submits it or makes it overdue on any save.
-        raise ToolError(f"Moodle ended the attempt itself because its time was up; its state is now {state}")
-    saved = _attempt_questions(attempt["id"])
-    rejected = [
-        str(slot)
-        for slot in answers
-        if saved[slot][0].get("stateclass") == "invalidanswer" or not _answer_kept(saved[slot][1], data)
-    ]
+    rejected = _save_answers(attempt["id"], answers, data, None)
     if rejected:
         raise ToolError(
             f"Moodle did not accept the answers to questions {', '.join(rejected)}; the answers it took stay saved in "
