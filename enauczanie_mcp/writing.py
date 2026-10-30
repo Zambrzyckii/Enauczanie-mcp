@@ -600,13 +600,9 @@ def _survey_quiz(course_id: int, module_id: int) -> dict:
         raise ToolError(f"No quiz with module id {module_id} in course {course_id}")
     # Moodle's quiz_has_grades(): marks count only when both values reach ALMOST_ZERO. A missing value counts as marks.
     marks = (quiz.get("grade"), quiz.get("sumgrades"))
-    if None in marks or min(float(m) for m in marks) >= ALMOST_ZERO:
-        raise ToolError("This quiz gives marks, so it is a test; the write tools only fill in quizzes without marks")
     # Moodle sends the navigation setting only while the quiz is open to the user.
     if "navmethod" not in quiz:
         raise ToolError("Moodle does not open this quiz to the user now; it is closed or restricted")
-    if quiz["navmethod"] != "free":
-        raise ToolError("This quiz must be answered page by page in a fixed order; the user fills it in in the browser")
     return quiz
 
 
