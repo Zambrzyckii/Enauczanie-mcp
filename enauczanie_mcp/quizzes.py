@@ -42,6 +42,23 @@ def summarize_attempt(attempt: dict) -> dict:
     )
 
 
+def page_count(attempt: dict) -> int:
+    # The layout lists the question slots of each page followed by a 0.
+    return attempt.get("layout", "").split(",").count("0")
+
+
+def time_left(quiz: dict, attempt: dict, now: float) -> str | None:
+    """Time until the attempt must be sent, counted like Moodle's time limit rule: the earlier of its start plus the
+    limit and the quiz's close date."""
+    ends = [attempt["timestart"] + quiz["timelimit"]] if quiz.get("timelimit") else []
+    if quiz.get("timeclose"):
+        ends.append(quiz["timeclose"])
+    if not ends:
+        return None
+    minutes, seconds = divmod(max(min(ends) - int(now), 0), 60)
+    return f"{minutes} min {seconds} s"
+
+
 def summarize_question(question: dict) -> dict:
     return compact(
         {
