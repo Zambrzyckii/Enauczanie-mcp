@@ -808,7 +808,9 @@ def next_quiz_page(
     return compact(result)
 
 
-def _quiz_survey_preview(quiz: dict, questions: dict[int, tuple[dict, dict]], answers: dict) -> list[str]:
+def _quiz_survey_preview(
+    quiz: dict, questions: dict[int, tuple[dict, dict]], answers: dict, unseen_pages: int = 0
+) -> list[str]:
     lines = [
         f"Survey: {strip_multilang(quiz['name'])}",
         "Not anonymous: a quiz keeps the user's name with the answers, and the teacher can see them",
@@ -822,6 +824,8 @@ def _quiz_survey_preview(quiz: dict, questions: dict[int, tuple[dict, dict]], an
     if left:
         numbers = ", ".join(str(questions[slot][0].get("number") or slot) for slot in left)
         lines.append(f"No answer is sent for questions {numbers}; anything saved there earlier stays")
+    if unseen_pages:
+        lines.append(f"Sequential navigation: the {unseen_pages} page(s) after this one were not shown and stay empty")
     lines.append("Sending finishes the attempt, after which its answers cannot be changed")
     return lines
 
@@ -833,18 +837,21 @@ def submit_quiz_survey(
 ) -> dict:
     """WRITE: answer and send a quiz, with or without marks, like its "Submit all and finish" button. answers maps
     question from get_quiz_survey to one option number, a list of option numbers or a text, all given by the user.
-    Without confirm=true nothing is saved or sent and the error lists the answers for the user to approve."""
+    Without confirm=true nothing is saved or sent and the error lists the answers for the user to approve. In a quiz
+    with sequential navigation it answers only the current page, and the pages after it stay empty."""
     quiz = _survey_quiz(course_id, module_id)
     attempt = _unfinished_attempt(quiz)
     if not attempt:
         raise ToolError("No attempt of this survey is in progress; get_quiz_survey starts one")
-    questions = _attempt_questions(attempt["id"])
+    page = attempt["currentpage"] if _sequential(quiz) else None
+    questions = _attempt_questions(attempt["id"], page)
     answers, data = _page_answers(questions, answers)
     if not answers:
         raise ToolError("Give answers by question from get_quiz_survey; none given")
     if not confirm:
-        raise _confirm_first("saved or sent", _quiz_survey_preview(quiz, questions, answers))
-    rejected = _save_answers(attempt["id"], answers, data, None)
+        unseen = 0 if page is None else page_count(attempt) - page - 1
+        raise _confirm_first("saved or sent", _quiz_survey_preview(quiz, questions, answers, unseen))
+    rejected = _save_answers(attempt["id"], answers, data, page)
     if rejected:
         raise ToolError(
             f"Moodle did not accept the answers to questions {', '.join(rejected)}; the answers it took stay saved in "
