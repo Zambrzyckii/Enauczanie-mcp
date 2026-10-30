@@ -18,7 +18,7 @@ Follow [Install](README.md#install), [Token](README.md#token) and [Register in C
 - There are no automated tests. Call every tool you changed on a real course and check its output. For a write tool, use calls that change nothing (a nonexistent id, or the description it returns without `confirm=true`) unless you accept the change on your own account.
 - Read tools in `server.py` change nothing. Do not call Moodle functions there that submit, post, start attempts or mark anything as viewed or read.
 - Write tools live only in `writing.py`, which loads only in write mode. A tool that hands in, deletes, sends or frees a spot first describes the change and acts only with `confirm=true`.
-- Quiz and H5P attempts stay out of the project.
+- H5P attempts stay out of the project.
 - Update the README when a tool, a setting or the structure changes.
 - Do not paste your token or other people's course data into issues or pull requests.
 

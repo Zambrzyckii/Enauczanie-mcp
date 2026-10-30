@@ -1,8 +1,7 @@
 """Write tools, registered only when ENAUCZANIE_ALLOW_WRITE=1 is set.
 
 Every tool here changes the user's real Moodle account. Content comes verbatim from the
-user; irreversible steps require an explicit confirm argument. Quiz attempts are made only
-for quizzes without marks, such as surveys; graded quizzes and H5P attempt results are
+user; irreversible steps require an explicit confirm argument. H5P attempt results are
 deliberately not supported.
 """
 import math
@@ -624,10 +623,10 @@ def _attempt_questions(attempt_id: int) -> dict[int, tuple[dict, dict]]:
 @server.tool()
 @_moodle_tool
 def get_quiz_survey(course_id: int, module_id: int, confirm: bool = False) -> dict:
-    """WRITE: open a survey made as a quiz without marks (module of type quiz, id from get_course_contents) and list
-    its questions with option numbers. It continues an attempt already in progress; starting a new one shows as an
-    attempt in progress, so without confirm=true nothing starts and the error describes the survey. Quizzes that give
-    marks are refused. submit_quiz_survey sends the answers."""
+    """WRITE: open a quiz, with or without marks (module of type quiz, id from get_course_contents), and list its
+    questions with option numbers. It continues an attempt already in progress; starting a new one shows as an
+    attempt in progress, so without confirm=true nothing starts and the error describes the quiz. submit_quiz_survey
+    sends the answers."""
     quiz = _survey_quiz(course_id, module_id)
     attempt = _unfinished_attempt(quiz)
     if not attempt:
@@ -721,10 +720,9 @@ def _quiz_survey_preview(quiz: dict, questions: dict[int, tuple[dict, dict]], an
 def submit_quiz_survey(
     course_id: int, module_id: int, answers: dict[int, int | str | list[int]], confirm: bool = False
 ) -> dict:
-    """WRITE: answer and send a survey made as a quiz without marks, like its "Submit all and finish" button. answers
-    maps question from get_quiz_survey to one option number, a list of option numbers or a text, all given by the
-    user. Without confirm=true nothing is saved or sent and the error lists the answers for the user to approve.
-    Quizzes that give marks are refused."""
+    """WRITE: answer and send a quiz, with or without marks, like its "Submit all and finish" button. answers maps
+    question from get_quiz_survey to one option number, a list of option numbers or a text, all given by the user.
+    Without confirm=true nothing is saved or sent and the error lists the answers for the user to approve."""
     quiz = _survey_quiz(course_id, module_id)
     attempt = _unfinished_attempt(quiz)
     if not attempt:

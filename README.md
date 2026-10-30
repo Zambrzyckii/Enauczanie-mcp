@@ -107,7 +107,7 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
 | Group sign-up (`choicegroup`) | `list_group_choices`, `join_group`, `leave_group` |
 | Poll (`choice`) | `list_vote_options`, `submit_vote` |
 | Survey (`feedback`) | `get_survey`, `submit_survey` |
-| Survey made as a quiz without marks (`quiz`): Attempt, Submit all and finish | `get_quiz_survey`, `submit_quiz_survey` |
+| Quiz (`quiz`): Attempt, Submit all and finish | `get_quiz_survey`, `submit_quiz_survey` |
 | Submit attendance (`attendance`) | `mark_attendance` |
 | Mark as done | `set_activity_done` |
 | Notification read | `mark_notification_read` |
@@ -125,22 +125,20 @@ echo "ENAUCZANIE_ALLOW_WRITE=1" >> .env
   `confirm=true`, because where the teacher set an automatic status without a password, opening
   the list of sessions already records it. Moodle still checks the password the teacher gives in class and
   may take marks only from the campus network. Where it offers several statuses, you choose one.
-- `get_quiz_survey` and `submit_quiz_survey` answer only quizzes that give no marks, such as
-  surveys made as quizzes. They use Moodle's own test, `quiz_has_grades()`, and refuse a quiz
-  whose maximum grade and question marks are both above zero before any attempt is started or
-  answered.
+- `get_quiz_survey` and `submit_quiz_survey` answer any quiz that Moodle lets you attempt now,
+  including quizzes that give marks.
   `get_quiz_survey` continues an attempt already in progress. `submit_quiz_survey` first saves
   the answers and checks that the attempt shows each one, and only then finishes the attempt.
   They handle questions with one answer (true/false too), with several answers, with a short
-  text and essays. Other question types and quizzes with sequential navigation are answered in
-  the browser. A quiz is not anonymous, so the teacher sees your name with the answers.
+  text and essays. Other question types are answered in the browser. A quiz is not anonymous,
+  so the teacher sees your name with the answers.
 - Many assignments have no draft stage. There, saving already hands the work in and the
   teacher sees it. The description before saving says which case applies.
 - New files replace every file already in the submission. On a team assignment the change
   applies to the shared submission of the whole group.
 - Online text is plain text. A blank line starts a new paragraph, other formatting such as
   bold or lists is not kept.
-- Quizzes that give marks and H5P attempts are not available, because they are graded tests.
+- H5P attempts are not available.
   Consent forms are not available, because the Moodle mobile app does not support them.
 - When the server runs in Docker, `file_paths` are paths inside the container, so mount the
   folder that holds the files.
@@ -170,7 +168,7 @@ plain text and cuts long texts and lists, so a course tree or a forum thread fit
 context. Write tools first upload files through `/webservice/upload.php` into the user's
 private draft area, then call the same functions the Moodle mobile app uses for each button.
 Attendance is a plugin whose pages the app gets as ready HTML through `tool_mobile_get_content`,
-so `mark_attendance` reads the sessions and statuses from that HTML. Survey quizzes are
+so `mark_attendance` reads the sessions and statuses from that HTML. Quizzes are
 answered the way the attempt page's form sends them, so `submit_quiz_survey` reads the
 question fields from the HTML of each question and sends them back with the answers.
 
