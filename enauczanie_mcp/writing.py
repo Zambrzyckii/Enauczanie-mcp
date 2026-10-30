@@ -5,6 +5,7 @@ user; irreversible steps require an explicit confirm argument. H5P attempt resul
 deliberately not supported.
 """
 import math
+import time
 from pathlib import Path
 
 from .assignments import summarize_status
@@ -13,7 +14,7 @@ from .attendance import (
 )
 from .formatting import compact, cut, find, format_datetime, full_text, html_to_text, strip_multilang, text_to_html
 from .moodle_client import MoodleApiError
-from .quizzes import parse_question_form, summarize_attempt, summarize_form_question
+from .quizzes import page_count, parse_question_form, summarize_attempt, summarize_form_question, time_left
 from .server import ToolError, _client, _moodle_tool, _userid, server
 from .surveys import CHOICE_TYPES, numeric_range, parse_choices, range_text, summarize_item
 
@@ -610,14 +611,41 @@ def _unfinished_attempt(quiz: dict) -> dict | None:
     return attempts[-1] if attempts else None
 
 
-def _attempt_questions(attempt_id: int) -> dict[int, tuple[dict, dict]]:
-    """Every question of the attempt by slot, with its parsed form."""
-    questions, page = {}, 0
-    while page >= 0:
-        payload = _client().call("mod_quiz_get_attempt_data", attemptid=attempt_id, page=page)
+def _sequential(quiz: dict) -> bool:
+    # Under sequential navigation Moodle shows only the current page and never goes back to an earlier one.
+    return quiz["navmethod"] != "free"
+
+
+def _attempt_questions(attempt_id: int, page: int | None = None) -> dict[int, tuple[dict, dict]]:
+    """Every question of the attempt by slot, with its parsed form, or only those of one page."""
+    questions, current = {}, page or 0
+    while current >= 0:
+        payload = _client().call("mod_quiz_get_attempt_data", attemptid=attempt_id, page=current)
         questions.update({q["slot"]: (q, parse_question_form(q.get("html", ""))) for q in payload["questions"]})
-        page = payload["nextpage"]
+        current = payload["nextpage"] if page is None else -1
     return questions
+
+
+def _unsupported(questions: dict[int, tuple[dict, dict]]) -> list[str]:
+    return [
+        str(question.get("number") or slot) for slot, (question, form) in questions.items() if form["kind"] == "unsupported"
+    ]
+
+
+def _page_info(quiz: dict, attempt: dict, questions: dict[int, tuple[dict, dict]]) -> dict:
+    """Where a sequential attempt stands, shown with the questions of its current page."""
+    info = {
+        "page": f"{attempt['currentpage'] + 1} of {page_count(attempt)}",
+        "time_left": time_left(quiz, attempt, time.time()),
+        "navigation": "Sequential: moving on to the next page cannot be undone",
+    }
+    lost = _unsupported(questions)
+    if lost:
+        info["warning"] = (
+            f"Questions {', '.join(lost)} cannot be answered here and are lost after moving on; the user answers this "
+            "page in the browser and clicks Next page there, or says to skip them"
+        )
+    return info
 
 
 @server.tool()
@@ -626,7 +654,8 @@ def get_quiz_survey(course_id: int, module_id: int, confirm: bool = False) -> di
     """WRITE: open a quiz, with or without marks (module of type quiz, id from get_course_contents), and list its
     questions with option numbers. It continues an attempt already in progress; starting a new one shows as an
     attempt in progress, so without confirm=true nothing starts and the error describes the quiz. submit_quiz_survey
-    sends the answers."""
+    sends the answers. A quiz with sequential navigation shows only its current page, which next_quiz_page answers
+    before moving on."""
     quiz = _survey_quiz(course_id, module_id)
     attempt = _unfinished_attempt(quiz)
     if not attempt:
@@ -640,20 +669,24 @@ def get_quiz_survey(course_id: int, module_id: int, confirm: bool = False) -> di
                 lines.append(f"Time limit: {quiz['timelimit'] // 60} min from the start")
             if quiz.get("timeclose"):
                 lines.append(f"Closes: {format_datetime(quiz['timeclose'])}")
+            if _sequential(quiz):
+                lines.append("Sequential navigation: one page at a time, with no way back to an earlier page")
             raise _confirm_first("started", lines)
         started = _client().call("mod_quiz_start_attempt", quizid=quiz["id"])
         if started.get("warnings") or not started.get("attempt"):
             warning = (started.get("warnings") or [{}])[0]
             raise ToolError(f"Moodle did not start the attempt: {warning.get('message') or 'no reason given'}")
         attempt = started["attempt"]
-    questions = _attempt_questions(attempt["id"])
-    return compact(
-        {
-            "name": strip_multilang(quiz["name"]),
-            "intro": full_text(quiz.get("intro", "")),
-            "questions": [summarize_form_question(question, form) for question, form in questions.values()],
-        }
-    )
+    sequential = _sequential(quiz)
+    questions = _attempt_questions(attempt["id"], attempt["currentpage"] if sequential else None)
+    result = {
+        "name": strip_multilang(quiz["name"]),
+        "intro": full_text(quiz.get("intro", "")),
+        "questions": [summarize_form_question(question, form) for question, form in questions.values()],
+    }
+    if sequential:
+        result.update(_page_info(quiz, attempt, questions))
+    return compact(result)
 
 
 def _quiz_answer_data(slot: int, form: dict, answer) -> dict:
