@@ -24,7 +24,7 @@ class FakeMoodle:
     """Answers the calls of the quiz tools and keeps Moodle's sequential navigation rules, as in
     quiz_attempt::check_page_access() and set_currentpage() of MOODLE_405_STABLE and MOODLE_500_STABLE."""
 
-    def __init__(self, pages: list[list[str]], navmethod: str = "seq"):
+    def __init__(self, pages: list[list[str]], navmethod: str = "sequential"):
         self.kinds = [kind for page in pages for kind in page]
         self.pages, slot = [], 1
         for page in pages:
@@ -48,7 +48,7 @@ class FakeMoodle:
     def _page_access(self, page: int, allownext: bool) -> bool:
         if not 0 <= page < len(self.pages):
             raise MoodleApiError("Invalid page number", "Invalid page number")
-        if self.quiz["navmethod"] != "seq":
+        if self.quiz["navmethod"] != "sequential":
             return True
         current = self.attempt["currentpage"]
         return page == current or (allownext and page == current + 1)
