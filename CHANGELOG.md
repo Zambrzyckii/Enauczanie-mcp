@@ -5,6 +5,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Write mode, off unless `ENAUCZANIE_ALLOW_WRITE=1` is set, with tools that work like Moodle's buttons for assignment submissions (save, submit, remove), group sign-ups, polls, surveys of type `feedback`, quizzes, attendance self-marking, manual completion and notifications. Tools that hand in, delete, send or free a spot first describe the change and act only with `confirm=true`.
+- `next_quiz_page` answers quizzes with sequential navigation one page at a time, with the page number and the time left.
+
+### Changed
+- `get_token.py` keeps the other lines of `.env`, such as `ENAUCZANIE_ALLOW_WRITE`, when it stores a new token.
+
 ## [0.1.0] - 2026-10-25
 
 ### Added

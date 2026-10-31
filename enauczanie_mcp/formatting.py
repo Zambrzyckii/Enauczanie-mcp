@@ -1,11 +1,13 @@
 import re
 from datetime import datetime
+from html import escape
 from html.parser import HTMLParser
 from pathlib import PurePosixPath
 
 _MLANG = re.compile(r"\{mlang\s+([\w-]+)\}(.*?)\{mlang\}", re.S)
 _WS = re.compile(r"\s+")
 _SPACES = re.compile(r"[ \t\r\f\v]+")
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
 
 _SKIPPED_TAGS = frozenset({"script", "style"})
 _BLOCK_TAGS = frozenset({"p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre"})
@@ -103,6 +105,12 @@ def html_to_text(
 
 def full_text(html: str) -> str:
     return html_to_text(html, None, links=True, keep_breaks=True)
+
+
+def text_to_html(text: str) -> str:
+    """Plain text as the Moodle editor stores it: a blank line starts a paragraph, a newline breaks the line."""
+    paragraphs = (p.strip() for p in _PARAGRAPH_BREAK.split(text.replace("\r\n", "\n")))
+    return "".join("<p>" + escape(p).replace("\n", "<br>") + "</p>" for p in paragraphs if p)
 
 
 def _join_lines(text: str) -> str:
