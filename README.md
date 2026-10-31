@@ -194,8 +194,15 @@ sequential navigation Moodle shows the questions of the current page only, so
 | `enauczanie_mcp/assignments.py`, `attendance.py`, `grades.py`, `forums.py`, `quizzes.py`, `surveys.py`, `updates.py` | shape Moodle's answers for each group of tools |
 | `enauczanie_mcp/h5p.py` | reads the text out of a downloaded H5P package |
 | `get_token.py` | gets the token through the mobile-app login flow |
+| `tests/fake_moodle.py`, `tests/test_sequential_quiz.py` | an in-memory Moodle web service for the quiz write tools and the tests that use it |
 
-There are no automated tests.
+The tests cover only the quiz write tools. They run `get_quiz_survey`, `next_quiz_page` and
+`submit_quiz_survey` against a fake Moodle that keeps Moodle's rules for sequential navigation,
+so they check how the tools call Moodle, not Moodle itself. Run them with:
+
+```bash
+.venv/bin/python -m unittest
+```
 
 ## Security
 
